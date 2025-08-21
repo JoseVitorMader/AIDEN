@@ -1,0 +1,11 @@
+google-generativeai
+SpeechRecognition
+pyttsx3
+gTTS
+pygame
+requests
+beautifulsoup4
+selenium
+webdriver-manager
+pyaudio
+python-dotenv

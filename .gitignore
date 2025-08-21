@@ -1,0 +1,22 @@
+# Ambiente virtual
+.venv/
+
+# Arquivos de ambiente
+.env
+.env.*
+*.env
+
+# Cache / compilados
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Áudio temporário
+*.mp3
+*.wav
+
+# Selenium / drivers
+chromedriver.exe
+
+# Logs
+*.log
