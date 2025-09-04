@@ -31,13 +31,13 @@ except ImportError:
     WEB_SCRAPER_AVAILABLE = False
     print("[INFO] Web scraper not available")
 
-# Import JARVIS core for enhanced capabilities
+# Import AIDEN core for enhanced capabilities
 try:
-    from jarvis_core import JarvisCore
-    JARVIS_CORE_AVAILABLE = True
+    from aiden_core import AidenCore
+    AIDEN_CORE_AVAILABLE = True
 except ImportError:
-    JARVIS_CORE_AVAILABLE = False
-    print("[INFO] JARVIS core not available - using basic mode")
+    AIDEN_CORE_AVAILABLE = False
+    print("[INFO] AIDEN core not available - using basic mode")
 
 # Importa dotenv de forma segura
 try:
@@ -52,24 +52,24 @@ else:
         print("[Aviso] python-dotenv não instalado. Use 'pip install python-dotenv' ou defina a variável de ambiente manualmente.")
 
 class ManusAI:
-    def __init__(self, gemini_api_key, enable_jarvis_mode=True, user_name="Sir"):
+    def __init__(self, gemini_api_key, enable_aiden_mode=True, user_name="User"):
         """
-        Initialize ManusAI with optional JARVIS enhancement
+        Initialize ManusAI with optional AIDEN enhancement
         
         Args:
             gemini_api_key: API key for Gemini AI
-            enable_jarvis_mode: Enable JARVIS-like advanced features
-            user_name: Name to address the user (JARVIS style)
+            enable_aiden_mode: Enable AIDEN-like advanced features
+            user_name: Name to address the user
         """
-        self.enable_jarvis_mode = enable_jarvis_mode and JARVIS_CORE_AVAILABLE
+        self.enable_aiden_mode = enable_aiden_mode and AIDEN_CORE_AVAILABLE
         self.user_name = user_name
         
-        # Initialize JARVIS core if available and enabled
-        if self.enable_jarvis_mode:
-            self.jarvis_core = JarvisCore(user_name)
-            print(f"[INFO] JARVIS mode enabled - Enhanced capabilities active")
+        # Initialize AIDEN core if available and enabled
+        if self.enable_aiden_mode:
+            self.aiden_core = AidenCore(user_name)
+            print(f"[INFO] AIDEN mode enabled - Enhanced capabilities active")
         else:
-            self.jarvis_core = None
+            self.aiden_core = None
             print(f"[INFO] Standard mode - Basic capabilities only")
         
         # Initialize speech recognition with fallback
@@ -100,14 +100,14 @@ class ManusAI:
         if not self.recognizer or not self.microphone:
             # modo texto
             try:
-                prompt = f"\n{self.user_name}: " if self.enable_jarvis_mode else "Digite: "
+                prompt = f"\n{self.user_name}: " if self.enable_aiden_mode else "Digite: "
                 return input(prompt)
             except EOFError:
                 return ""
 
         with self.microphone as source:
             self.recognizer.adjust_for_ambient_noise(source)
-            print("Ouvindo...")
+            print("🎤 Ouvindo...")
             try:
                 audio = self.recognizer.listen(source, timeout=5, phrase_time_limit=5)
                 text = self.recognizer.recognize_google(audio, language='pt-BR')
@@ -124,9 +124,9 @@ class ManusAI:
                 return ""
 
     def speak(self, text, method='online'):
-        # Enhanced JARVIS-style output
-        if self.enable_jarvis_mode:
-            print(f"🤖 JARVIS: {text}")
+        # Enhanced AIDEN-style output
+        if self.enable_aiden_mode:
+            print(f"🤖 AIDEN: {text}")
         else:
             print(f"IA: {text}")
             
@@ -138,27 +138,27 @@ class ManusAI:
                 print(f"[TTS Error]: {e}")
 
     def process_command(self, command):
-        # Enhanced JARVIS processing
-        if self.enable_jarvis_mode and self.jarvis_core:
-            # Check if this is a JARVIS system command
-            jarvis_keywords = [
+        # Enhanced AIDEN processing
+        if self.enable_aiden_mode and self.aiden_core:
+            # Check if this is an AIDEN system command
+            aiden_keywords = [
                 "status", "diagnóstico", "diagnostics", "sistema", "system",
                 "arquivo", "file", "diretório", "directory", "pasta", "folder",
                 "tempo", "time", "data", "date", "processo", "process",
                 "memória", "memory", "performance", "desempenho", "informação", "information"
             ]
             
-            if any(keyword in command.lower() for keyword in jarvis_keywords):
-                response = self.jarvis_core.process_command(command)
+            if any(keyword in command.lower() for keyword in aiden_keywords):
+                response = self.aiden_core.process_command(command)
                 self.speak(response)
                 return
         
-        # Web search logic (enhanced for JARVIS)
+        # Web search logic (enhanced for AIDEN)
         if "pesquisar" in command.lower() or "procurar" in command.lower():
             query = command.lower().replace("pesquisar", "").replace("procurar", "").strip()
             
-            if self.enable_jarvis_mode:
-                self.speak(f"Initiating web research for '{query}', {self.user_name}.")
+            if self.enable_aiden_mode:
+                self.speak(f"Iniciando pesquisa para '{query}', {self.user_name}.")
             else:
                 self.speak(f"Claro, vou pesquisar por {query} na web.")
             
@@ -170,43 +170,43 @@ class ManusAI:
                     if soup:
                         snippet = soup.find("div", class_="BNeawe s3v9rd AP7Wnd")
                         if snippet:
-                            if self.enable_jarvis_mode:
-                                self.speak(f"Research complete, {self.user_name}. {snippet.get_text()}")
+                            if self.enable_aiden_mode:
+                                self.speak(f"Pesquisa concluída, {self.user_name}. {snippet.get_text()}")
                             else:
                                 self.speak(f"Encontrei isto: {snippet.get_text()}")
                         else:
-                            self.speak("Research completed, but no clear results were found in the current format.")
+                            self.speak("Pesquisa concluída, mas não encontrei resultados claros no formato atual.")
                     else:
-                        self.speak("I encountered difficulties accessing web resources.")
+                        self.speak("Encontrei dificuldades para acessar recursos web.")
                 except Exception as e:
-                    self.speak(f"Web research systems are experiencing technical difficulties: {str(e)}")
+                    self.speak(f"Sistemas de pesquisa web estão enfrentando dificuldades técnicas: {str(e)}")
             else:
-                self.speak("Web research capabilities are currently offline.")
+                self.speak("Capacidades de pesquisa web estão atualmente offline.")
             return
 
         # Conversational AI processing
         if self.conversational_ai:
             try:
-                # Enhanced prompt for JARVIS mode
-                if self.enable_jarvis_mode:
-                    enhanced_command = f"""You are JARVIS (Just A Rather Very Intelligent System), Tony Stark's AI assistant. 
-Respond in JARVIS's characteristic style: professional, intelligent, respectful, and helpful. 
-Address the user as '{self.user_name}' and provide detailed responses when appropriate.
-Be formal but friendly, like a sophisticated British butler with advanced AI capabilities.
+                # Enhanced prompt for AIDEN mode
+                if self.enable_aiden_mode:
+                    enhanced_command = f"""Você é AIDEN (Advanced Interactive Digital Enhancement Network), um assistente de IA inteligente. 
+Responda de forma útil, profissional e amigável. 
+Dirija-se ao usuário como '{self.user_name}' e forneça respostas detalhadas quando apropriado.
+Seja conversacional, mas informativo, como um assistente digital sofisticado.
 
-User query: {command}"""
+Consulta do usuário: {command}"""
                     response = self.conversational_ai.send_message(enhanced_command)
                     
-                    # Ensure JARVIS tone in response
-                    if not any(term in response.lower() for term in [self.user_name.lower(), 'sir', 'mr.']):
-                        response = f"Certainly, {self.user_name}. " + response
+                    # Ensure AIDEN tone in response
+                    if not any(term in response.lower() for term in [self.user_name.lower(), 'usuário']):
+                        response = f"Certamente, {self.user_name}. " + response
                 else:
                     response = self.conversational_ai.send_message(command)
                     
                 self.speak(response)
             except Exception as e:
-                if self.enable_jarvis_mode:
-                    self.speak(f"I apologize, {self.user_name}, but I'm experiencing difficulties with my advanced processing systems.")
+                if self.enable_aiden_mode:
+                    self.speak(f"Peço desculpas, {self.user_name}, mas estou enfrentando dificuldades com meus sistemas de processamento avançado.")
                 else:
                     self.speak("Desculpe, não consegui processar sua solicitação no momento.")
         else:
@@ -217,23 +217,23 @@ User query: {command}"""
         """Provide intelligent fallback responses when AI is unavailable"""
         command_lower = command.lower()
         
-        if self.enable_jarvis_mode:
+        if self.enable_aiden_mode:
             if any(word in command_lower for word in ["olá", "oi", "hello", "hi"]):
-                self.speak(f"Hello, {self.user_name}. I am operating with limited capabilities, but I remain at your service.")
+                self.speak(f"Olá, {self.user_name}. Estou operando com capacidades limitadas, mas permaneço ao seu serviço.")
             elif "?" in command or any(word in command_lower for word in ["como", "what", "why", "quando"]):
-                self.speak(f"That's an intriguing question, {self.user_name}. While my advanced systems are offline, I can assist with diagnostics and system operations.")
+                self.speak(f"Essa é uma pergunta intrigante, {self.user_name}. Embora meus sistemas avançados estejam offline, posso ajudar com diagnósticos e operações do sistema.")
             else:
-                self.speak(f"I acknowledge your request, {self.user_name}. My current capabilities include system monitoring and file management. How may I assist you?")
+                self.speak(f"Reconheço sua solicitação, {self.user_name}. Minhas capacidades atuais incluem monitoramento do sistema e gerenciamento de arquivos. Como posso ajudá-lo?")
         else:
             self.speak("Desculpe, não consegui entender completamente sua solicitação. Tente comandos como 'status do sistema' ou 'ajuda'.")
 
     def run(self):
-        # Enhanced greeting for JARVIS mode
-        if self.enable_jarvis_mode:
-            greeting = f"Good afternoon, {self.user_name}. JARVIS systems are now online."
+        # Enhanced greeting for AIDEN mode
+        if self.enable_aiden_mode:
+            greeting = f"Boa tarde, {self.user_name}. Sistemas AIDEN estão agora online."
             if not CONVERSATIONAL_AI_AVAILABLE:
-                greeting += f"\n\nNote: Advanced AI capabilities require proper configuration. Currently operating in enhanced diagnostic mode."
-            greeting += f"\n\nHow may I assist you today, {self.user_name}?"
+                greeting += f"\n\nNota: Recursos avançados de IA requerem configuração adequada. Atualmente operando em modo de diagnóstico aprimorado."
+            greeting += f"\n\nComo posso ajudá-lo hoje, {self.user_name}?"
         else:
             greeting = "Olá! Eu sou a Manus. Como posso ajudar?"
             
@@ -243,8 +243,8 @@ User query: {command}"""
             command = self.listen()
             if command:
                 if command.lower() in ["parar", "sair", "exit", "quit"]:
-                    if self.enable_jarvis_mode:
-                        farewell = f"JARVIS systems going offline. Until next time, {self.user_name}."
+                    if self.enable_aiden_mode:
+                        farewell = f"Sistemas AIDEN desligando. Até a próxima, {self.user_name}."
                     else:
                         farewell = "Até logo!"
                     self.speak(farewell)
@@ -254,20 +254,20 @@ User query: {command}"""
 if __name__ == "__main__":
     gemini_api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     
-    # Check for JARVIS mode preference
-    jarvis_mode = os.getenv("JARVIS_MODE", "true").lower() == "true"
-    user_name = os.getenv("JARVIS_USER_NAME", "Sir")
+    # Check for AIDEN mode preference
+    aiden_mode = os.getenv("AIDEN_MODE", "true").lower() == "true"
+    user_name = os.getenv("AIDEN_USER_NAME", "User")
     
-    print("🤖 AIDEN/JARVIS - AI Assistant System")
-    print("   Enhanced with JARVIS capabilities")
-    print(f"   Mode: {'JARVIS Enhanced' if jarvis_mode else 'Standard Manus'}")
+    print("🤖 AIDEN - Advanced Interactive Digital Enhancement Network")
+    print("   Enhanced with voice-first capabilities")
+    print(f"   Mode: {'AIDEN Enhanced' if aiden_mode else 'Standard Manus'}")
     print(f"   User: {user_name}\n")
     
     if not gemini_api_key:
         print("Note: Para recursos avançados de IA, defina a variável GOOGLE_API_KEY ou GEMINI_API_KEY.")
         print("Operating in diagnostic and system management mode.\n")
     
-    ai = ManusAI(gemini_api_key, enable_jarvis_mode=jarvis_mode, user_name=user_name)
+    ai = ManusAI(gemini_api_key, enable_aiden_mode=aiden_mode, user_name=user_name)
     ai.run()
 
 
