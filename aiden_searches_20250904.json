@@ -4,5 +4,35 @@
     "result": "test result",
     "source": "test",
     "timestamp": "2025-09-04T17:32:27.380436"
+  },
+  {
+    "query": "Como está o tempo hoje?",
+    "result": "O tempo está ensolarado com temperatura de 25°C",
+    "source": "test",
+    "timestamp": "2025-09-04T17:34:23.433751"
+  },
+  {
+    "query": "Como funciona inteligência artificial?",
+    "result": "IA é a simulação da inteligência humana em máquinas programadas para pensar como humanos.",
+    "source": "ai",
+    "timestamp": "2025-09-04T17:35:52.918650"
+  },
+  {
+    "query": "O que é machine learning?",
+    "result": "Machine learning é um método de análise de dados que automatiza a construção de modelos analíticos.",
+    "source": "ai",
+    "timestamp": "2025-09-04T17:35:52.918935"
+  },
+  {
+    "query": "status sistema operacional",
+    "result": "Sistema operacional está funcionando normalmente com 80% de memória livre.",
+    "source": "system",
+    "timestamp": "2025-09-04T17:35:52.919345"
+  },
+  {
+    "query": "temperatura processador",
+    "result": "Temperatura do processador está em 45°C, dentro dos parâmetros normais.",
+    "source": "system",
+    "timestamp": "2025-09-04T17:35:52.919652"
   }
 ]
