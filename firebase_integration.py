@@ -1,6 +1,6 @@
 """
 Firebase Integration Module for AIDEN
-Handles saving and retrieving conversation data and search results from Firebase
+Handles saving and retrieving conversation data and search results from Firebase Realtime Database
 """
 
 import json
@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Any
 # Safe import for Firebase (will be gracefully handled if not available)
 try:
     import firebase_admin
-    from firebase_admin import credentials, firestore
+    from firebase_admin import credentials, db
     FIREBASE_AVAILABLE = True
 except ImportError:
     FIREBASE_AVAILABLE = False
@@ -39,42 +39,41 @@ class FirebaseManager:
             print("[WARNING] Firebase SDK not available - data will not be saved to Firebase")
     
     def _initialize_firebase(self):
-        """Initialize Firebase app and Firestore database"""
+        """Initialize Firebase app and Realtime Database"""
         try:
-            # For server-side SDK, we need a service account key
-            # Since we only have web config, we'll create a minimal credential
-            # This would normally require a service account JSON file
-            
             # Try to initialize Firebase app if not already done
             if not firebase_admin._apps:
-                # In production, you would use:
+                # For production, you would use a service account JSON file:
                 # cred = credentials.Certificate('path/to/serviceAccountKey.json')
-                # For now, we'll use application default credentials or skip if not available
+                # For development/demo, we'll use application default or anonymous
                 try:
                     cred = credentials.ApplicationDefault()
                     self.app = firebase_admin.initialize_app(cred, {
-                        'projectId': self.config.get('projectId', 'aiden-dd627')
+                        'projectId': self.config.get('projectId', 'aiden-dd627'),
+                        'databaseURL': f"https://{self.config.get('projectId', 'aiden-dd627')}-default-rtdb.firebaseio.com/"
                     })
                 except Exception:
-                    # Fallback: try to initialize without credentials (for development)
-                    print("[INFO] Using default Firebase credentials")
-                    self.app = firebase_admin.initialize_app()
+                    # Fallback: try to initialize with minimal config
+                    print("[INFO] Using default Firebase credentials for Realtime Database")
+                    self.app = firebase_admin.initialize_app(options={
+                        'databaseURL': f"https://{self.config.get('projectId', 'aiden-dd627')}-default-rtdb.firebaseio.com/"
+                    })
             else:
                 self.app = firebase_admin.get_app()
             
-            # Initialize Firestore
-            self.db = firestore.client()
+            # Initialize Realtime Database
+            self.db = db.reference()
             self.connected = True
-            print(f"[SUCCESS] Connected to Firebase project: {self.config.get('projectId', 'unknown')}")
+            print(f"[SUCCESS] Connected to Firebase Realtime Database: {self.config.get('projectId', 'unknown')}")
             
         except Exception as e:
-            print(f"[ERROR] Firebase initialization failed: {e}")
+            print(f"[ERROR] Firebase Realtime Database initialization failed: {e}")
             print("[INFO] Continuing without Firebase - data will be stored locally only")
             self.connected = False
     
     def save_search_result(self, query: str, result: str, source: str = "web") -> bool:
         """
-        Save a search query and result to Firebase
+        Save a search query and result to Firebase Realtime Database
         
         Args:
             query: The search query
@@ -92,22 +91,23 @@ class FirebaseManager:
                 'query': query,
                 'result': result,
                 'source': source,
-                'timestamp': datetime.datetime.now(),
+                'timestamp': datetime.datetime.now().isoformat(),
                 'session_id': self._get_session_id()
             }
             
-            # Save to 'searches' collection
-            doc_ref = self.db.collection('searches').add(doc_data)
-            print(f"[Firebase] Search saved with ID: {doc_ref[1].id}")
+            # Save to 'searches' node in Realtime Database
+            searches_ref = self.db.child('searches')
+            new_search_ref = searches_ref.push(doc_data)
+            print(f"[Firebase] Search saved with key: {new_search_ref.key}")
             return True
             
         except Exception as e:
-            print(f"[ERROR] Failed to save to Firebase: {e}")
+            print(f"[ERROR] Failed to save to Firebase Realtime Database: {e}")
             return self._save_locally(query, result, source)
     
     def search_previous_results(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         """
-        Search for previous results related to the query
+        Search for previous results related to the query in Realtime Database
         
         Args:
             query: Search query to match against
@@ -120,19 +120,23 @@ class FirebaseManager:
             return self._search_locally(query, limit)
         
         try:
-            # Search in Firestore for similar queries
+            # Search in Realtime Database for similar queries
             query_lower = query.lower()
             
-            # Get recent searches that might contain relevant keywords
-            searches_ref = self.db.collection('searches').order_by(
-                'timestamp', direction=firestore.Query.DESCENDING
-            ).limit(50)  # Get last 50 searches to search through
+            # Get recent searches from Realtime Database
+            searches_ref = self.db.child('searches')
+            all_searches = searches_ref.order_by_child('timestamp').limit_to_last(50).get()
             
-            docs = searches_ref.stream()
+            if not all_searches:
+                return []
+            
             matches = []
             
-            for doc in docs:
-                data = doc.to_dict()
+            # Convert the data and search for matches
+            for key, data in all_searches.items():
+                if not isinstance(data, dict):
+                    continue
+                    
                 stored_query = data.get('query', '').lower()
                 stored_result = data.get('result', '').lower()
                 
@@ -143,7 +147,7 @@ class FirebaseManager:
                 # Check if there's overlap in keywords
                 if query_words.intersection(stored_words) or any(word in stored_result for word in query_words):
                     matches.append({
-                        'id': doc.id,
+                        'id': key,
                         'query': data.get('query'),
                         'result': data.get('result'),
                         'source': data.get('source'),
@@ -159,12 +163,12 @@ class FirebaseManager:
             return matches[:limit]
             
         except Exception as e:
-            print(f"[ERROR] Failed to search Firebase: {e}")
+            print(f"[ERROR] Failed to search Firebase Realtime Database: {e}")
             return self._search_locally(query, limit)
     
     def save_conversation(self, user_input: str, ai_response: str) -> bool:
         """
-        Save a conversation exchange to Firebase
+        Save a conversation exchange to Firebase Realtime Database
         
         Args:
             user_input: User's input
@@ -180,18 +184,76 @@ class FirebaseManager:
             doc_data = {
                 'user_input': user_input,
                 'ai_response': ai_response,
-                'timestamp': datetime.datetime.now(),
+                'timestamp': datetime.datetime.now().isoformat(),
                 'session_id': self._get_session_id()
             }
             
-            # Save to 'conversations' collection
-            doc_ref = self.db.collection('conversations').add(doc_data)
-            print(f"[Firebase] Conversation saved with ID: {doc_ref[1].id}")
+            # Save to 'conversations' node in Realtime Database
+            conversations_ref = self.db.child('conversations')
+            new_conversation_ref = conversations_ref.push(doc_data)
+            print(f"[Firebase] Conversation saved with key: {new_conversation_ref.key}")
             return True
             
         except Exception as e:
-            print(f"[ERROR] Failed to save conversation to Firebase: {e}")
+            print(f"[ERROR] Failed to save conversation to Firebase Realtime Database: {e}")
             return self._save_conversation_locally(user_input, ai_response)
+    
+    def save_voice_sample(self, user_id: str, voice_data: Dict[str, Any]) -> bool:
+        """
+        Save voice learning data to Firebase Realtime Database
+        
+        Args:
+            user_id: User identifier
+            voice_data: Voice characteristics and preferences
+        
+        Returns:
+            bool: True if saved successfully
+        """
+        if not self.connected:
+            return self._save_voice_sample_locally(user_id, voice_data)
+        
+        try:
+            voice_data['timestamp'] = datetime.datetime.now().isoformat()
+            voice_data['session_id'] = self._get_session_id()
+            
+            # Save to 'voice_profiles' node in Realtime Database
+            voice_ref = self.db.child('voice_profiles').child(user_id)
+            voice_ref.push(voice_data)
+            print(f"[Firebase] Voice sample saved for user: {user_id}")
+            return True
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to save voice sample to Firebase: {e}")
+            return self._save_voice_sample_locally(user_id, voice_data)
+    
+    def get_voice_profile(self, user_id: str) -> Dict[str, Any]:
+        """
+        Get voice profile for a user from Firebase Realtime Database
+        
+        Args:
+            user_id: User identifier
+        
+        Returns:
+            Voice profile data
+        """
+        if not self.connected:
+            return self._get_voice_profile_locally(user_id)
+        
+        try:
+            voice_ref = self.db.child('voice_profiles').child(user_id)
+            voice_data = voice_ref.get()
+            
+            if voice_data:
+                # Get the most recent voice profile
+                if isinstance(voice_data, dict):
+                    latest_key = max(voice_data.keys())
+                    return voice_data[latest_key]
+                    
+            return {}
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to get voice profile from Firebase: {e}")
+            return self._get_voice_profile_locally(user_id)
     
     def _get_session_id(self) -> str:
         """Generate a session ID for grouping related interactions"""
@@ -287,12 +349,57 @@ class FirebaseManager:
             print(f"[ERROR] Failed to save conversation locally: {e}")
             return False
 
+    def _save_voice_sample_locally(self, user_id: str, voice_data: Dict[str, Any]) -> bool:
+        """Fallback method to save voice samples locally"""
+        try:
+            filename = f"aiden_voice_profiles_{user_id}.json"
+            voice_data['timestamp'] = datetime.datetime.now().isoformat()
+            
+            # Read existing data
+            try:
+                with open(filename, 'r', encoding='utf-8') as f:
+                    existing_data = json.load(f)
+            except FileNotFoundError:
+                existing_data = []
+            
+            # Append new data
+            existing_data.append(voice_data)
+            
+            # Write back
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(existing_data, f, indent=2, ensure_ascii=False, default=str)
+            
+            print(f"[Local] Voice sample saved to {filename}")
+            return True
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to save voice sample locally: {e}")
+            return False
+    
+    def _get_voice_profile_locally(self, user_id: str) -> Dict[str, Any]:
+        """Fallback method to get voice profile locally"""
+        try:
+            filename = f"aiden_voice_profiles_{user_id}.json"
+            
+            try:
+                with open(filename, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    # Return the most recent profile
+                    return data[-1] if data else {}
+            except FileNotFoundError:
+                return {}
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to get voice profile locally: {e}")
+            return {}
 
-# Firebase configuration from the problem statement
+
+# Firebase configuration for Realtime Database
 FIREBASE_CONFIG = {
     "apiKey": "AIzaSyDe1tIF0RDqotZVqzV1o77utir_nl2XMSc",
     "authDomain": "aiden-dd627.firebaseapp.com",
     "projectId": "aiden-dd627",
+    "databaseURL": "https://aiden-dd627-default-rtdb.firebaseio.com/",
     "storageBucket": "aiden-dd627.firebasestorage.app",
     "messagingSenderId": "397399680835",
     "appId": "1:397399680835:web:fbfbdffbd3abe8dc7b71f6",
