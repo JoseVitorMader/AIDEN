@@ -20,7 +20,7 @@ else:
 class ConversationalAI:
     def __init__(self, api_key: str):
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel("gemini-pro")
+        self.model = genai.GenerativeModel("gemini-1.5-flash")
         self.chat = self.model.start_chat(history=[])
         
         # Set Portuguese locale for date/time formatting
@@ -57,11 +57,20 @@ class ConversationalAI:
     def _enhance_prompt_with_context(self, message: str) -> str:
         """Enhance the user's message with current context and capabilities."""
         
-        # Check if the message is asking for date/time information
-        time_keywords = [
-            'data', 'hora', 'tempo', 'hoje', 'agora', 'current', 'time', 'date',
-            'when', 'quando', 'que dia', 'que horas', 'calendar', 'calendário'
+        # Check if the message is specifically asking for date/time information
+        # Using more precise patterns to avoid false positives
+        message_lower = message.lower()
+        
+        # Specific time/date question patterns
+        time_question_patterns = [
+            'que horas', 'que hora', 'qual hora', 'hora atual', 'horário',
+            'que dia', 'qual data', 'data atual', 'data de hoje', 'hoje é',
+            'what time', 'current time', 'what date', 'current date', 'today is',
+            'quando é', 'que data é', 'calendário hoje'
         ]
+        
+        # Check for standalone time keywords (as complete words)
+        standalone_time_words = ['agora', 'hoje', 'current', 'calendar', 'calendário']
         
         enhanced_prompt = f"""Você é AIDEN (Advanced Interactive Digital Enhancement Network), um assistente de IA inteligente.
         
@@ -78,8 +87,17 @@ class ConversationalAI:
         - Mantenha respostas concisas mas completas
         """
         
-        # Add current date/time context if relevant
-        if any(keyword in message.lower() for keyword in time_keywords):
+        # Check if any time question pattern is present
+        has_time_pattern = any(pattern in message_lower for pattern in time_question_patterns)
+        
+        # Check if message is only a standalone time word (or very short phrase with time word)
+        is_standalone_time = any(
+            word.strip() == message_lower.strip() or 
+            (len(message_lower.split()) <= 2 and word in message_lower.split())
+            for word in standalone_time_words
+        )
+        
+        if has_time_pattern or is_standalone_time:
             enhanced_prompt += f"\n\nInformações atuais de data e hora:\n{self._get_current_datetime_info()}"
         
         enhanced_prompt += f"\n\nPergunta do usuário: {message}"
@@ -106,9 +124,27 @@ class ConversationalAI:
         """Generate intelligent fallback responses when API fails."""
         message_lower = message.lower()
         
-        # Handle date/time queries locally
-        time_keywords = ['data', 'hora', 'tempo', 'hoje', 'agora', 'when', 'time', 'date']
-        if any(keyword in message_lower for keyword in time_keywords):
+        # Handle date/time queries locally using improved detection
+        time_question_patterns = [
+            'que horas', 'que hora', 'qual hora', 'hora atual', 'horário',
+            'que dia', 'qual data', 'data atual', 'data de hoje', 'hoje é',
+            'what time', 'current time', 'what date', 'current date', 'today is',
+            'quando é', 'que data é', 'calendário hoje'
+        ]
+        
+        standalone_time_words = ['agora', 'hoje', 'current', 'calendar', 'calendário']
+        
+        # Check if any time question pattern is present
+        has_time_pattern = any(pattern in message_lower for pattern in time_question_patterns)
+        
+        # Check if message is only a standalone time word (or very short phrase with time word)
+        is_standalone_time = any(
+            word.strip() == message_lower.strip() or 
+            (len(message_lower.split()) <= 2 and word in message_lower.split())
+            for word in standalone_time_words
+        )
+        
+        if has_time_pattern or is_standalone_time:
             return f"Informações atuais de data e hora:{self._get_current_datetime_info()}"
         
         # Handle greetings
@@ -138,14 +174,14 @@ class ConversationalAI:
             test_response = self.model.generate_content("Test")
             return {
                 "api_connected": True,
-                "model": "gemini-pro",
+                "model": "gemini-1.5-flash",
                 "status": "operational",
                 "features": ["conversational_ai", "datetime_queries", "general_knowledge"]
             }
         except Exception as e:
             return {
                 "api_connected": False,
-                "model": "gemini-pro",
+                "model": "gemini-1.5-flash",
                 "status": "error",
                 "error": str(e),
                 "fallback_features": ["datetime_queries", "basic_responses"]
