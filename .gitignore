@@ -3,8 +3,9 @@
 
 # Arquivos de ambiente
 .env
-.env.*
-*.env
+.env.local
+.env.production
+.env.development
 
 # Cache / compilados
 __pycache__/
@@ -14,9 +15,27 @@ __pycache__/
 # Áudio temporário
 *.mp3
 *.wav
+temp_audio.*
 
 # Selenium / drivers
 chromedriver.exe
 
 # Logs
 *.log
+
+# Arquivos de dados locais AIDEN
+aiden_*.json
+jarvis_*.json
+*_session_*.json
+*_conversations_*.json
+*_searches_*.json
+*_voice_profiles_*.json
+*_voice_usage_*.json
+
+# Credentials Firebase
+serviceAccountKey.json
+firebase-adminsdk-*.json
+
+# Arquivos temporários
+/tmp/
+*.tmp

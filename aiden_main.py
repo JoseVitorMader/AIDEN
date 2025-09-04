@@ -31,14 +31,14 @@ except ImportError:
     print("[INFO] Speech recognition not available - text-only mode")
 
 try:
-    from text_to_speech import speak_text
+    from text_to_speech import speak_text, adapt_voice_settings
     TEXT_TO_SPEECH_AVAILABLE = True
 except ImportError:
     TEXT_TO_SPEECH_AVAILABLE = False
     print("[INFO] Text-to-speech not available - text-only mode")
 
 try:
-    from web_scraper import scrape_static_page
+    from web_scraper import search_web, get_page_summary
     WEB_SCRAPING_AVAILABLE = True
 except ImportError:
     WEB_SCRAPING_AVAILABLE = False
@@ -183,10 +183,10 @@ class AIDEN:
         # PRIORITY: Attempt text-to-speech if available
         if self.capabilities["text_to_speech"]:
             try:
-                # Try offline TTS first (faster)
-                if not speak_text(text, method='offline'):
+                # Use improved TTS with user-specific voice settings
+                if not speak_text(text, method='offline', user_id=self.user_name):
                     # Fallback to online TTS if offline fails
-                    speak_text(text, method='online')
+                    speak_text(text, method='online', user_id=self.user_name)
                     print("🔊 Audio output: Online TTS used")
                 else:
                     print("🔊 Audio output: Offline TTS used")
@@ -219,6 +219,10 @@ class AIDEN:
                     print(f"🔍 Found {len(previous_results)} related previous searches in database")
             except Exception as e:
                 print(f"[Firebase Search Error] {e}")
+        
+        # Check for voice adaptation commands
+        if any(keyword in command.lower() for keyword in ["voz", "voice", "falar", "speak", "volume", "velocidade", "grave", "agudo"]):
+            return self._handle_voice_adaptation(command)
         
         # Check for core AIDEN commands first
         core_keywords = [
@@ -304,32 +308,26 @@ User query: {command}"""
         
         if self.capabilities["web_research"]:
             try:
-                # Perform web search
-                search_url = f"https://www.google.com/search?q={query.replace(' ', '+')}"
-                soup = scrape_static_page(search_url)
+                # Use enhanced web search
+                search_results = search_web(query, num_results=3)
                 
-                if soup:
-                    # Try to extract search results
-                    snippets = soup.find_all("div", class_="BNeawe s3v9rd AP7Wnd")[:3]
-                    if snippets:
-                        response += "🌐 New web research results:\n\n"
-                        web_results = ""
-                        for i, snippet in enumerate(snippets, 1):
-                            snippet_text = snippet.get_text()
-                            response += f"{i}. {snippet_text}\n\n"
-                            web_results += snippet_text + " "
-                        
-                        # Save to Firebase
-                        if self.firebase_manager:
-                            try:
-                                self.firebase_manager.save_search_result(query, web_results, "web")
-                                response += "💾 Research results saved to database for future reference.\n"
-                            except Exception as e:
-                                print(f"[Firebase Save Error] {e}")
-                    else:
-                        response += "Research completed, but I was unable to extract clear results from the current search format."
+                if search_results.get("results"):
+                    response += "🌐 New web research results:\n\n"
+                    
+                    for i, result in enumerate(search_results["results"], 1):
+                        response += f"{i}. {result.get('title', 'Sem título')}\n"
+                        response += f"   {result.get('snippet', 'Sem descrição')}\n\n"
+                    
+                    # Save comprehensive results to Firebase
+                    if self.firebase_manager:
+                        try:
+                            results_text = json.dumps(search_results, ensure_ascii=False, indent=2)
+                            self.firebase_manager.save_search_result(query, results_text, "web")
+                            response += "💾 Research results saved to database for future reference.\n"
+                        except Exception as e:
+                            print(f"[Firebase Save Error] {e}")
                 else:
-                    response += "I encountered difficulties accessing web resources for your research request."
+                    response += "🔍 Web search completed, but no clear results were found."
                     
             except Exception as e:
                 response += f"Research systems are currently experiencing technical difficulties: {str(e)}"
@@ -401,6 +399,17 @@ User query: {command}"""
         # Default intelligent response
         else:
             return f"I acknowledge your request, {self.user_name}. I'm ready to help with system operations, diagnostics, file management, and can search our previous conversations for relevant information.{context_note}"
+    
+    def _handle_voice_adaptation(self, command: str) -> str:
+        """Handle voice adaptation commands"""
+        try:
+            if TEXT_TO_SPEECH_AVAILABLE:
+                adapted_settings = adapt_voice_settings(self.user_name, command)
+                return f"Configurações de voz adaptadas com base no seu feedback: velocidade={adapted_settings.get('rate')}, volume={adapted_settings.get('volume'):.1f}, tom={adapted_settings.get('pitch'):.1f}. Experimentando as novas configurações agora!"
+            else:
+                return "As funcionalidades de adaptação de voz não estão disponíveis no momento. Instale as dependências de áudio para usar este recurso."
+        except Exception as e:
+            return f"Erro ao adaptar configurações de voz: {str(e)}"
     
     def shutdown(self) -> str:
         """AIDEN shutdown sequence"""
