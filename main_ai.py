@@ -186,6 +186,119 @@ class ManusAI:
             except Exception as fallback_error:
                 print(f"[Fallback TTS Error]: {fallback_error}")
     
+    def _handle_voice_feedback(self, command):
+        """
+        Handle voice feedback commands to adapt voice settings
+        
+        Returns:
+            bool: True if command was a voice feedback command
+        """
+        voice_feedback_keywords = [
+            'voz', 'voice', 'fala', 'speak', 'falar', 'rápido', 'devagar', 
+            'alto', 'baixo', 'grave', 'agudo', 'velocidade', 'speed',
+            'volume', 'tom', 'pitch', 'mais', 'menos', 'melhor', 'pior'
+        ]
+        
+        command_lower = command.lower()
+        
+        # Check if this is voice feedback
+        if any(keyword in command_lower for keyword in voice_feedback_keywords):
+            # Look for specific feedback patterns
+            feedback_patterns = [
+                'fale mais', 'speak more', 'voz mais', 'voice more',
+                'muito rápido', 'too fast', 'muito devagar', 'too slow',
+                'muito alto', 'too loud', 'muito baixo', 'too quiet',
+                'melhor qualidade', 'better quality', 'mais natural', 'more natural'
+            ]
+            
+            if any(pattern in command_lower for pattern in feedback_patterns):
+                try:
+                    if TEXT_TO_SPEECH_AVAILABLE:
+                        from text_to_speech import adapt_voice_settings
+                        adapted_settings = adapt_voice_settings(self.user_name, command)
+                        
+                        response = f"Entendi, {self.user_name}. Ajustei as configurações de voz conforme solicitado."
+                        if 'changes_made' in adapted_settings and adapted_settings['changes_made']:
+                            changes = ', '.join(adapted_settings['changes_made'])
+                            response += f" Mudanças: {changes}."
+                        
+                        self.speak(response)
+                    else:
+                        self.speak(f"Entendi seu feedback sobre a voz, {self.user_name}, mas as configurações de fala não estão disponíveis no momento.")
+                    
+                    return True
+                except Exception as e:
+                    print(f"[Voice Feedback Error]: {e}")
+                    self.speak(f"Desculpe, {self.user_name}, não consegui ajustar as configurações de voz no momento.")
+                    return True
+        
+        return False
+    
+    def _handle_voice_commands(self, command):
+        """
+        Handle voice-related system commands
+        
+        Returns:
+            bool: True if command was a voice system command
+        """
+        command_lower = command.lower()
+        
+        # Voice statistics command
+        if any(term in command_lower for term in ['estatísticas de voz', 'voice statistics', 'estatísticas da voz']):
+            if TEXT_TO_SPEECH_AVAILABLE:
+                try:
+                    from text_to_speech import get_voice_statistics
+                    stats = get_voice_statistics(self.user_name)
+                    
+                    if 'error' in stats:
+                        response = f"Não consegui obter as estatísticas de voz: {stats['error']}"
+                    else:
+                        response = f"Estatísticas de voz para {self.user_name}: "
+                        response += f"{stats['total_voice_samples']} amostras de voz gravadas, "
+                        response += f"{stats['total_words_spoken']} palavras faladas no total. "
+                        if stats['methods_used']:
+                            methods = ', '.join([f"{method}: {count}" for method, count in stats['methods_used'].items()])
+                            response += f"Métodos utilizados: {methods}."
+                    
+                    self.speak(response)
+                    return True
+                except Exception as e:
+                    self.speak(f"Erro ao obter estatísticas de voz: {e}")
+                    return True
+        
+        # Voice calibration command
+        elif any(term in command_lower for term in ['calibrar voz', 'calibrate voice', 'calibração de voz']):
+            if TEXT_TO_SPEECH_AVAILABLE:
+                try:
+                    from text_to_speech import calibrate_voice_for_user
+                    self.speak(f"Iniciando calibração de voz para {self.user_name}. Vou testar algumas frases.")
+                    calibrated_settings = calibrate_voice_for_user(self.user_name)
+                    
+                    response = f"Calibração concluída, {self.user_name}. "
+                    response += f"Velocidade: {calibrated_settings['rate']} palavras por minuto, "
+                    response += f"Volume: {calibrated_settings['volume']:.1f}, "
+                    response += f"Tom: {calibrated_settings['pitch']:.1f}."
+                    
+                    self.speak(response)
+                    return True
+                except Exception as e:
+                    self.speak(f"Erro na calibração de voz: {e}")
+                    return True
+        
+        # Voice help command
+        elif any(term in command_lower for term in ['ajuda de voz', 'voice help', 'comandos de voz']):
+            help_text = f"Comandos de voz disponíveis, {self.user_name}: "
+            help_text += "Diga 'fale mais rápido' ou 'mais devagar' para ajustar velocidade. "
+            help_text += "Use 'mais alto' ou 'mais baixo' para volume. "
+            help_text += "Diga 'voz mais grave' ou 'mais agudo' para o tom. "
+            help_text += "Use 'calibrar voz' para calibração automática ou "
+            help_text += "'estatísticas de voz' para ver dados de uso."
+            
+            self.speak(help_text)
+            return True
+        
+        return False
+    
     def _save_conversation_data(self, ai_response):
         """Save conversation data to Firebase for voice learning"""
         try:
@@ -204,6 +317,10 @@ class ManusAI:
         # Store last user input for conversation logging
         self._last_user_input = command
         
+        # Check for voice feedback commands first
+        if self._handle_voice_feedback(command):
+            return
+        
         # Enhanced AIDEN processing
         if self.enable_aiden_mode and self.aiden_core:
             # Check if this is an AIDEN system command
@@ -211,10 +328,15 @@ class ManusAI:
                 "status", "diagnóstico", "diagnostics", "sistema", "system",
                 "arquivo", "file", "diretório", "directory", "pasta", "folder",
                 "tempo", "time", "data", "date", "processo", "process",
-                "memória", "memory", "performance", "desempenho", "informação", "information"
+                "memória", "memory", "performance", "desempenho", "informação", "information",
+                "voz", "voice", "estatísticas", "statistics", "calibrar", "calibrate"
             ]
             
             if any(keyword in command.lower() for keyword in aiden_keywords):
+                # Check for voice-related commands first
+                if self._handle_voice_commands(command):
+                    return
+                    
                 response = self.aiden_core.process_command(command)
                 self.speak(response)
                 return

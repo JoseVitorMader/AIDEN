@@ -359,6 +359,134 @@ def _save_voice_profile_locally(user_id: str, settings: Dict[str, Any]) -> None:
     except Exception as e:
         print(f"[ERROR] Failed to save voice profile locally: {e}")
 
+def calibrate_voice_for_user(user_id: str) -> Dict[str, Any]:
+    """
+    Interactive voice calibration to optimize settings for user preferences
+    
+    Args:
+        user_id: User identifier
+        
+    Returns:
+        Calibrated voice settings
+    """
+    try:
+        print(f"🎤 Iniciando calibração de voz para {user_id}...")
+        
+        # Start with current settings or defaults
+        settings = get_voice_settings(user_id)
+        
+        # Test phrases for calibration
+        test_phrases = [
+            "Olá, esta é uma frase de teste para calibração de voz.",
+            "Esta frase testa a velocidade e clareza da síntese de fala.",
+            "Vamos ajustar a voz para ficar mais natural e agradável."
+        ]
+        
+        calibration_data = {
+            'user_id': user_id,
+            'calibration_session': datetime.datetime.now().isoformat(),
+            'test_phrases': test_phrases,
+            'initial_settings': settings.copy(),
+            'adjustments_made': []
+        }
+        
+        # Test current settings
+        print("Testando configurações atuais...")
+        for phrase in test_phrases:
+            speak_text(phrase, method='offline', user_id=user_id)
+        
+        # Save calibration data
+        try:
+            from firebase_integration import get_firebase_manager
+            firebase_manager = get_firebase_manager()
+            firebase_manager.save_voice_sample(user_id, calibration_data)
+        except:
+            _save_voice_profile_locally(user_id, calibration_data)
+        
+        return settings
+        
+    except Exception as e:
+        print(f"[Voice Calibration Error]: {e}")
+        return get_voice_settings(user_id)
+
+def get_voice_statistics(user_id: str) -> Dict[str, Any]:
+    """
+    Get voice usage statistics for a user
+    
+    Args:
+        user_id: User identifier
+        
+    Returns:
+        Voice usage statistics
+    """
+    try:
+        from firebase_integration import get_firebase_manager
+        firebase_manager = get_firebase_manager()
+        
+        if firebase_manager.connected:
+            # Try to get data from Firebase
+            voice_ref = firebase_manager.db.child('voice_profiles').child(user_id)
+            voice_data = voice_ref.get()
+            
+            if voice_data:
+                total_samples = len(voice_data)
+                methods_used = {}
+                total_words = 0
+                
+                for sample in voice_data.values():
+                    method = sample.get('method_used', 'unknown')
+                    methods_used[method] = methods_used.get(method, 0) + 1
+                    total_words += sample.get('word_count', 0)
+                
+                return {
+                    'total_voice_samples': total_samples,
+                    'total_words_spoken': total_words,
+                    'methods_used': methods_used,
+                    'average_words_per_sample': total_words / total_samples if total_samples > 0 else 0
+                }
+        
+        # Fallback to local data
+        return _get_local_voice_statistics(user_id)
+        
+    except Exception as e:
+        print(f"[Voice Statistics Error]: {e}")
+        return {'error': str(e)}
+
+def _get_local_voice_statistics(user_id: str) -> Dict[str, Any]:
+    """Get voice statistics from local files"""
+    try:
+        filename = f"aiden_voice_usage_{user_id}.json"
+        
+        with open(filename, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        total_samples = len(data)
+        methods_used = {}
+        total_words = 0
+        
+        for sample in data:
+            method = sample.get('method_used', 'unknown')
+            methods_used[method] = methods_used.get(method, 0) + 1
+            total_words += sample.get('word_count', 0)
+        
+        return {
+            'total_voice_samples': total_samples,
+            'total_words_spoken': total_words,
+            'methods_used': methods_used,
+            'average_words_per_sample': total_words / total_samples if total_samples > 0 else 0
+        }
+        
+    except FileNotFoundError:
+        return {
+            'total_voice_samples': 0,
+            'total_words_spoken': 0,
+            'methods_used': {},
+            'average_words_per_sample': 0
+        }
+    except Exception as e:
+        return {'error': str(e)}
+
+
 if __name__ == "__main__":
     # Test voice system with improved settings
     text = "Olá! Este é um teste do sistema de síntese de fala com voz masculina aprimorada."
@@ -376,4 +504,13 @@ if __name__ == "__main__":
     # Test with adapted settings
     print("🎯 Testando com configurações adaptadas...")
     speak_text("Agora estou falando com as configurações adaptadas às suas preferências.", method='offline', user_id='test_user')
+    
+    # Test new features
+    print("📊 Testando estatísticas de voz...")
+    stats = get_voice_statistics('test_user')
+    print(f"Estatísticas: {stats}")
+    
+    print("🎤 Testando calibração de voz...")
+    calibrated_settings = calibrate_voice_for_user('test_user')
+    print(f"Configurações calibradas: {calibrated_settings}")
 
