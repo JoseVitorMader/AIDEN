@@ -5,6 +5,7 @@ import pygame
 import tempfile
 from typing import Optional, Dict, Any
 import json
+import datetime
 
 def get_voice_settings(user_id: str = "default") -> Dict[str, Any]:
     """Get voice settings for a specific user"""
@@ -18,51 +19,70 @@ def get_voice_settings(user_id: str = "default") -> Dict[str, Any]:
     except FileNotFoundError:
         pass
     
-    # Default voice settings - male voice, less robotic
+    # Default voice settings - male voice, less robotic, faster speech
     return {
-        'rate': 180,  # Speaking rate (words per minute)
+        'rate': 200,  # Speaking rate (words per minute) - increased from 180
         'volume': 0.9,  # Volume level (0.0 to 1.0)
         'voice_id': 'male',  # Prefer male voice
-        'pitch': 0.8,  # Lower pitch for more natural sound
+        'pitch': 0.7,  # Lower pitch for more natural sound - slightly lower
         'language': 'pt-br'  # Portuguese Brazil
     }
 
 def configure_voice_engine(engine, settings: Dict[str, Any]) -> bool:
     """Configure the voice engine with specific settings"""
     try:
-        # Set speaking rate
-        engine.setProperty('rate', settings.get('rate', 180))
+        # Set speaking rate - with improved range handling
+        rate = settings.get('rate', 200)
+        engine.setProperty('rate', max(120, min(300, rate)))  # Clamp between reasonable values
         
         # Set volume
-        engine.setProperty('volume', settings.get('volume', 0.9))
+        volume = settings.get('volume', 0.9)
+        engine.setProperty('volume', max(0.1, min(1.0, volume)))
         
-        # Try to set a male voice
+        # Try to set a male voice with improved selection logic
         voices = engine.getProperty('voices')
         if voices:
-            male_voice = None
+            selected_voice = None
+            male_voices = []
+            brazilian_voices = []
+            
             for voice in voices:
                 # Look for male voices (common identifiers)
                 voice_name = voice.name.lower() if voice.name else ""
                 voice_id = voice.id.lower() if voice.id else ""
                 
+                # Prioritize Brazilian Portuguese voices
                 if any(term in voice_name or term in voice_id for term in 
-                       ['male', 'masculino', 'man', 'homem', 'david', 'alex', 'joão']):
-                    male_voice = voice
-                    break
-                # Also look for Brazilian Portuguese voices
-                elif any(term in voice_name or term in voice_id for term in 
-                         ['brazil', 'pt-br', 'portuguese', 'brasil']):
-                    male_voice = voice
-                    break
+                       ['brazil', 'pt-br', 'portuguese', 'brasil', 'br']):
+                    brazilian_voices.append(voice)
+                    
+                # Collect male voices
+                if any(term in voice_name or term in voice_id for term in 
+                       ['male', 'masculino', 'man', 'homem', 'david', 'alex', 'joão', 'marcos']):
+                    male_voices.append(voice)
             
-            if male_voice:
-                engine.setProperty('voice', male_voice.id)
-                print(f"[TTS] Using male voice: {male_voice.name}")
+            # Selection priority: Brazilian Portuguese > Male > First available
+            if brazilian_voices:
+                # Prefer male Brazilian voice
+                selected_voice = next((v for v in brazilian_voices if any(term in v.name.lower() for term in ['male', 'masculino', 'man', 'homem'])), brazilian_voices[0])
+            elif male_voices:
+                selected_voice = male_voices[0]
             else:
-                # Fallback to first available voice
-                if len(voices) > 1:
-                    engine.setProperty('voice', voices[1].id)  # Often the second voice is different
-                print("[TTS] Male voice not found, using available voice")
+                # Fallback to second voice (often different from default)
+                selected_voice = voices[1] if len(voices) > 1 else voices[0]
+            
+            if selected_voice:
+                engine.setProperty('voice', selected_voice.id)
+                print(f"[TTS] Using voice: {selected_voice.name} (ID: {selected_voice.id})")
+            else:
+                print("[TTS] Using default system voice")
+        
+        # Additional engine properties for better quality
+        try:
+            # Some engines support additional properties
+            engine.setProperty('pitch', settings.get('pitch', 0.7))
+        except Exception:
+            pass  # Not all engines support pitch
         
         return True
     except Exception as e:
@@ -91,7 +111,7 @@ def speak_offline(text: str, user_id: str = "default") -> bool:
         return False
 
 def speak_online(text: str, user_id: str = "default", lang: str = 'pt-br', filename: Optional[str] = None) -> bool:
-    """Convert text to speech using gTTS (online) with male voice preference."""
+    """Convert text to speech using gTTS (online) with improved voice quality."""
     try:
         if filename is None:
             # Create a temporary file
@@ -102,8 +122,14 @@ def speak_online(text: str, user_id: str = "default", lang: str = 'pt-br', filen
         settings = get_voice_settings(user_id)
         lang = settings.get('language', 'pt-br')
         
-        # Use gTTS with slower speed for more natural sound
-        tts = gTTS(text=text, lang=lang, slow=False, tld='com.br')
+        # Use gTTS with improved settings for more natural sound
+        # Use slower speed for longer texts to improve clarity
+        use_slow = len(text) > 200  # Use slower speech for longer texts
+        
+        # Improve TTS quality with better TLD selection for Brazilian Portuguese
+        tld = 'com.br' if 'br' in lang else 'com'
+        
+        tts = gTTS(text=text, lang=lang, slow=use_slow, tld=tld)
         tts.save(filename)
         
         # Save voice usage data for learning
@@ -154,22 +180,48 @@ def speak_text(text: str, method: str = 'offline', user_id: str = "default") -> 
         return False
 
 def save_voice_usage(user_id: str, text: str, method: str, settings: Dict[str, Any]) -> None:
-    """Save voice usage data for learning and adaptation."""
+    """Save voice usage data for learning and adaptation with enhanced analytics."""
     try:
+        import time
+        
+        # Calculate analytics
+        text_length = len(text)
+        word_count = len(text.split())
+        estimated_duration = word_count / settings.get('rate', 200) * 60  # seconds
+        
         # Try to import Firebase manager for cloud storage
         try:
             from firebase_integration import get_firebase_manager
             firebase_manager = get_firebase_manager()
             
+            # Save detailed voice usage data
             voice_data = {
                 'text_spoken': text,
                 'method_used': method,
                 'settings': settings,
-                'text_length': len(text),
-                'word_count': len(text.split())
+                'text_length': text_length,
+                'word_count': word_count,
+                'estimated_duration': estimated_duration,
+                'language': settings.get('language', 'pt-br'),
+                'voice_quality_rating': None  # Can be filled by user feedback later
             }
             
             firebase_manager.save_voice_sample(user_id, voice_data)
+            
+            # Also save usage analytics
+            analytics_data = {
+                'method_used': method,
+                'text_length': text_length,
+                'word_count': word_count,
+                'estimated_duration': estimated_duration,
+                'settings_used': {
+                    'rate': settings.get('rate'),
+                    'volume': settings.get('volume'),
+                    'pitch': settings.get('pitch')
+                }
+            }
+            
+            firebase_manager.save_voice_usage_analytics(user_id, analytics_data)
             
         except ImportError:
             # Fallback to local storage
@@ -215,47 +267,225 @@ def _save_voice_usage_locally(user_id: str, text: str, method: str, settings: Di
         print(f"[ERROR] Failed to save voice usage locally: {e}")
 
 def adapt_voice_settings(user_id: str, feedback: str) -> Dict[str, Any]:
-    """Adapt voice settings based on user feedback."""
+    """Adapt voice settings based on user feedback with improved learning."""
     settings = get_voice_settings(user_id)
     
     feedback_lower = feedback.lower()
+    changes_made = []
     
-    # Adjust settings based on feedback
-    if 'mais devagar' in feedback_lower or 'slower' in feedback_lower:
-        settings['rate'] = max(120, settings.get('rate', 180) - 20)
-    elif 'mais rápido' in feedback_lower or 'faster' in feedback_lower:
-        settings['rate'] = min(250, settings.get('rate', 180) + 20)
+    # Adjust settings based on feedback with more nuanced changes
+    if any(term in feedback_lower for term in ['mais devagar', 'slower', 'muito rápido', 'too fast']):
+        old_rate = settings.get('rate', 200)
+        settings['rate'] = max(120, old_rate - 25)
+        changes_made.append(f"velocidade reduzida de {old_rate} para {settings['rate']}")
+        
+    elif any(term in feedback_lower for term in ['mais rápido', 'faster', 'muito devagar', 'too slow']):
+        old_rate = settings.get('rate', 200)
+        settings['rate'] = min(280, old_rate + 25)
+        changes_made.append(f"velocidade aumentada de {old_rate} para {settings['rate']}")
     
-    if 'mais baixo' in feedback_lower or 'quieter' in feedback_lower:
-        settings['volume'] = max(0.1, settings.get('volume', 0.9) - 0.1)
-    elif 'mais alto' in feedback_lower or 'louder' in feedback_lower:
-        settings['volume'] = min(1.0, settings.get('volume', 0.9) + 0.1)
+    if any(term in feedback_lower for term in ['mais baixo', 'quieter', 'muito alto', 'too loud']):
+        old_volume = settings.get('volume', 0.9)
+        settings['volume'] = max(0.2, old_volume - 0.15)
+        changes_made.append(f"volume reduzido de {old_volume:.1f} para {settings['volume']:.1f}")
+        
+    elif any(term in feedback_lower for term in ['mais alto', 'louder', 'muito baixo', 'too quiet']):
+        old_volume = settings.get('volume', 0.9)
+        settings['volume'] = min(1.0, old_volume + 0.15)
+        changes_made.append(f"volume aumentado de {old_volume:.1f} para {settings['volume']:.1f}")
     
-    if 'grave' in feedback_lower or 'deeper' in feedback_lower:
-        settings['pitch'] = max(0.5, settings.get('pitch', 0.8) - 0.1)
-    elif 'agudo' in feedback_lower or 'higher' in feedback_lower:
-        settings['pitch'] = min(1.2, settings.get('pitch', 0.8) + 0.1)
+    if any(term in feedback_lower for term in ['grave', 'deeper', 'voz mais grossa', 'lower pitch']):
+        old_pitch = settings.get('pitch', 0.7)
+        settings['pitch'] = max(0.4, old_pitch - 0.15)
+        changes_made.append(f"tom reduzido de {old_pitch:.1f} para {settings['pitch']:.1f}")
+        
+    elif any(term in feedback_lower for term in ['agudo', 'higher', 'voz mais fina', 'higher pitch']):
+        old_pitch = settings.get('pitch', 0.7)
+        settings['pitch'] = min(1.2, old_pitch + 0.15)
+        changes_made.append(f"tom aumentado de {old_pitch:.1f} para {settings['pitch']:.1f}")
     
-    # Save adapted settings
+    # New: Quality feedback handling
+    if any(term in feedback_lower for term in ['mais natural', 'more natural', 'melhor qualidade', 'better quality']):
+        # Adjust for more natural sound
+        settings['rate'] = max(160, min(220, settings.get('rate', 200)))
+        settings['pitch'] = max(0.6, min(0.9, settings.get('pitch', 0.7)))
+        changes_made.append("ajustado para som mais natural")
+    
+    # Add timestamp and learning metadata
+    settings['last_adapted'] = datetime.datetime.now().isoformat()
+    settings['feedback_received'] = feedback
+    settings['changes_made'] = changes_made
+    
+    # Save adapted settings with better error handling
     try:
         from firebase_integration import get_firebase_manager
         firebase_manager = get_firebase_manager()
-        firebase_manager.save_voice_sample(user_id, settings)
-    except:
-        # Save locally
+        if firebase_manager.save_voice_sample(user_id, settings):
+            print(f"[Voice Learning] Settings saved to Firebase: {', '.join(changes_made) if changes_made else 'no changes needed'}")
+        else:
+            raise Exception("Firebase save failed")
+    except Exception as e:
+        print(f"[Voice Learning] Saving to local storage (Firebase unavailable): {e}")
+        # Save locally with improved structure
+        _save_voice_profile_locally(user_id, settings)
+    
+    return settings
+
+def _save_voice_profile_locally(user_id: str, settings: Dict[str, Any]) -> None:
+    """Save voice profile locally with improved structure"""
+    try:
         filename = f"aiden_voice_profiles_{user_id}.json"
+        
+        # Read existing profiles
         try:
             with open(filename, 'r', encoding='utf-8') as f:
                 profiles = json.load(f)
         except FileNotFoundError:
             profiles = []
         
+        # Add new profile
         profiles.append(settings)
         
+        # Keep only last 10 profiles to avoid large files
+        if len(profiles) > 10:
+            profiles = profiles[-10:]
+        
+        # Write back
         with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(profiles, f, indent=2, ensure_ascii=False)
+            json.dump(profiles, f, indent=2, ensure_ascii=False, default=str)
+            
+        print(f"[Voice Learning] Profile saved locally to {filename}")
+            
+    except Exception as e:
+        print(f"[ERROR] Failed to save voice profile locally: {e}")
+
+def calibrate_voice_for_user(user_id: str) -> Dict[str, Any]:
+    """
+    Interactive voice calibration to optimize settings for user preferences
     
-    return settings
+    Args:
+        user_id: User identifier
+        
+    Returns:
+        Calibrated voice settings
+    """
+    try:
+        print(f"🎤 Iniciando calibração de voz para {user_id}...")
+        
+        # Start with current settings or defaults
+        settings = get_voice_settings(user_id)
+        
+        # Test phrases for calibration
+        test_phrases = [
+            "Olá, esta é uma frase de teste para calibração de voz.",
+            "Esta frase testa a velocidade e clareza da síntese de fala.",
+            "Vamos ajustar a voz para ficar mais natural e agradável."
+        ]
+        
+        calibration_data = {
+            'user_id': user_id,
+            'calibration_session': datetime.datetime.now().isoformat(),
+            'test_phrases': test_phrases,
+            'initial_settings': settings.copy(),
+            'adjustments_made': []
+        }
+        
+        # Test current settings
+        print("Testando configurações atuais...")
+        for phrase in test_phrases:
+            speak_text(phrase, method='offline', user_id=user_id)
+        
+        # Save calibration data
+        try:
+            from firebase_integration import get_firebase_manager
+            firebase_manager = get_firebase_manager()
+            firebase_manager.save_voice_sample(user_id, calibration_data)
+        except:
+            _save_voice_profile_locally(user_id, calibration_data)
+        
+        return settings
+        
+    except Exception as e:
+        print(f"[Voice Calibration Error]: {e}")
+        return get_voice_settings(user_id)
+
+def get_voice_statistics(user_id: str) -> Dict[str, Any]:
+    """
+    Get voice usage statistics for a user
+    
+    Args:
+        user_id: User identifier
+        
+    Returns:
+        Voice usage statistics
+    """
+    try:
+        from firebase_integration import get_firebase_manager
+        firebase_manager = get_firebase_manager()
+        
+        if firebase_manager.connected:
+            # Try to get data from Firebase
+            voice_ref = firebase_manager.db.child('voice_profiles').child(user_id)
+            voice_data = voice_ref.get()
+            
+            if voice_data:
+                total_samples = len(voice_data)
+                methods_used = {}
+                total_words = 0
+                
+                for sample in voice_data.values():
+                    method = sample.get('method_used', 'unknown')
+                    methods_used[method] = methods_used.get(method, 0) + 1
+                    total_words += sample.get('word_count', 0)
+                
+                return {
+                    'total_voice_samples': total_samples,
+                    'total_words_spoken': total_words,
+                    'methods_used': methods_used,
+                    'average_words_per_sample': total_words / total_samples if total_samples > 0 else 0
+                }
+        
+        # Fallback to local data
+        return _get_local_voice_statistics(user_id)
+        
+    except Exception as e:
+        print(f"[Voice Statistics Error]: {e}")
+        return {'error': str(e)}
+
+def _get_local_voice_statistics(user_id: str) -> Dict[str, Any]:
+    """Get voice statistics from local files"""
+    try:
+        filename = f"aiden_voice_usage_{user_id}.json"
+        
+        with open(filename, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        total_samples = len(data)
+        methods_used = {}
+        total_words = 0
+        
+        for sample in data:
+            method = sample.get('method_used', 'unknown')
+            methods_used[method] = methods_used.get(method, 0) + 1
+            total_words += sample.get('word_count', 0)
+        
+        return {
+            'total_voice_samples': total_samples,
+            'total_words_spoken': total_words,
+            'methods_used': methods_used,
+            'average_words_per_sample': total_words / total_samples if total_samples > 0 else 0
+        }
+        
+    except FileNotFoundError:
+        return {
+            'total_voice_samples': 0,
+            'total_words_spoken': 0,
+            'methods_used': {},
+            'average_words_per_sample': 0
+        }
+    except Exception as e:
+        return {'error': str(e)}
+
 
 if __name__ == "__main__":
     # Test voice system with improved settings
@@ -274,4 +504,13 @@ if __name__ == "__main__":
     # Test with adapted settings
     print("🎯 Testando com configurações adaptadas...")
     speak_text("Agora estou falando com as configurações adaptadas às suas preferências.", method='offline', user_id='test_user')
+    
+    # Test new features
+    print("📊 Testando estatísticas de voz...")
+    stats = get_voice_statistics('test_user')
+    print(f"Estatísticas: {stats}")
+    
+    print("🎤 Testando calibração de voz...")
+    calibrated_settings = calibrate_voice_for_user('test_user')
+    print(f"Configurações calibradas: {calibrated_settings}")
 

@@ -200,7 +200,7 @@ class FirebaseManager:
     
     def save_voice_sample(self, user_id: str, voice_data: Dict[str, Any]) -> bool:
         """
-        Save voice learning data to Firebase Realtime Database
+        Save voice learning data to Firebase Realtime Database with enhanced metadata
         
         Args:
             user_id: User identifier
@@ -213,18 +213,105 @@ class FirebaseManager:
             return self._save_voice_sample_locally(user_id, voice_data)
         
         try:
-            voice_data['timestamp'] = datetime.datetime.now().isoformat()
-            voice_data['session_id'] = self._get_session_id()
+            # Enhance voice data with additional metadata
+            enhanced_voice_data = {
+                **voice_data,
+                'timestamp': datetime.datetime.now().isoformat(),
+                'session_id': self._get_session_id(),
+                'user_id': user_id,
+                'data_type': 'voice_profile'
+            }
             
             # Save to 'voice_profiles' node in Realtime Database
             voice_ref = self.db.child('voice_profiles').child(user_id)
-            voice_ref.push(voice_data)
-            print(f"[Firebase] Voice sample saved for user: {user_id}")
+            new_profile_ref = voice_ref.push(enhanced_voice_data)
+            
+            # Also save a summary for quick access
+            summary_ref = self.db.child('voice_profiles_summary').child(user_id)
+            summary_data = {
+                'latest_settings': voice_data,
+                'last_updated': datetime.datetime.now().isoformat(),
+                'total_samples': self._get_voice_sample_count(user_id) + 1
+            }
+            summary_ref.set(summary_data)
+            
+            print(f"[Firebase] Voice sample saved for user: {user_id} with key: {new_profile_ref.key}")
             return True
             
         except Exception as e:
             print(f"[ERROR] Failed to save voice sample to Firebase: {e}")
             return self._save_voice_sample_locally(user_id, voice_data)
+    
+    def _get_voice_sample_count(self, user_id: str) -> int:
+        """Get the count of voice samples for a user"""
+        try:
+            voice_ref = self.db.child('voice_profiles').child(user_id)
+            voice_data = voice_ref.get()
+            return len(voice_data) if voice_data else 0
+        except:
+            return 0
+            
+    def save_voice_usage_analytics(self, user_id: str, analytics_data: Dict[str, Any]) -> bool:
+        """
+        Save voice usage analytics to Firebase for learning and improvement
+        
+        Args:
+            user_id: User identifier
+            analytics_data: Analytics data including text length, speaking time, etc.
+        
+        Returns:
+            bool: True if saved successfully
+        """
+        if not self.connected:
+            return self._save_voice_analytics_locally(user_id, analytics_data)
+        
+        try:
+            analytics_data.update({
+                'timestamp': datetime.datetime.now().isoformat(),
+                'session_id': self._get_session_id(),
+                'user_id': user_id
+            })
+            
+            # Save to 'voice_analytics' node
+            analytics_ref = self.db.child('voice_analytics').child(user_id)
+            analytics_ref.push(analytics_data)
+            
+            print(f"[Firebase] Voice analytics saved for user: {user_id}")
+            return True
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to save voice analytics to Firebase: {e}")
+            return self._save_voice_analytics_locally(user_id, analytics_data)
+    
+    def _save_voice_analytics_locally(self, user_id: str, analytics_data: Dict[str, Any]) -> bool:
+        """Save voice analytics locally as fallback"""
+        try:
+            filename = f"aiden_voice_analytics_{user_id}.json"
+            analytics_data['timestamp'] = datetime.datetime.now().isoformat()
+            
+            # Read existing data
+            try:
+                with open(filename, 'r', encoding='utf-8') as f:
+                    existing_data = json.load(f)
+            except FileNotFoundError:
+                existing_data = []
+            
+            # Append new data
+            existing_data.append(analytics_data)
+            
+            # Keep only last 50 entries
+            if len(existing_data) > 50:
+                existing_data = existing_data[-50:]
+            
+            # Write back
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(existing_data, f, indent=2, ensure_ascii=False, default=str)
+            
+            return True
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to save voice analytics locally: {e}")
+            return False
     
     def get_voice_profile(self, user_id: str) -> Dict[str, Any]:
         """
