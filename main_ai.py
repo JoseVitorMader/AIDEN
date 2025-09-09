@@ -105,6 +105,53 @@ class ManusAI:
             except EOFError:
                 return ""
 
+        # Enhanced listening with voice learning
+        try:
+            from voice_recognition import recognize_speech_from_mic
+            result = recognize_speech_from_mic(self.recognizer, self.microphone, self.user_name, collect_voice_data=True)
+            
+            if result["success"]:
+                transcription = result["transcription"]
+                confidence = result.get("confidence", 0.0)
+                
+                # Show confidence if it's available
+                if confidence > 0:
+                    print(f"Você disse: {transcription} (Confiança: {confidence:.2f})")
+                else:
+                    print(f"Você disse: {transcription}")
+                
+                # Save conversation data to Firebase if available
+                try:
+                    from firebase_integration import get_firebase_manager
+                    firebase_manager = get_firebase_manager()
+                    
+                    # Save the input for learning
+                    voice_data = result.get("voice_data", {})
+                    voice_data.update({
+                        'user_input': transcription,
+                        'confidence': confidence,
+                        'context': 'conversation_input'
+                    })
+                    firebase_manager.save_voice_sample(self.user_name, voice_data)
+                    
+                except Exception as e:
+                    print(f"[Firebase] Não foi possível salvar dados de voz: {e}")
+                
+                return transcription
+            else:
+                error_msg = result.get("error", "Erro desconhecido")
+                print(f"Erro no reconhecimento de voz: {error_msg}")
+                return ""
+                
+        except ImportError:
+            # Fallback to original implementation
+            return self._listen_fallback()
+        except Exception as e:
+            print(f"Erro no sistema de voz melhorado: {e}")
+            return self._listen_fallback()
+    
+    def _listen_fallback(self):
+        """Fallback method for voice recognition"""
         with self.microphone as source:
             self.recognizer.adjust_for_ambient_noise(source)
             print("🎤 Ouvindo...")
@@ -133,9 +180,64 @@ class ManusAI:
         # Attempt text-to-speech if available
         if TEXT_TO_SPEECH_AVAILABLE:
             try:
-                speak_text(text, method)
+                # Handle long texts by chunking them
+                if len(text) > 500:  # If text is longer than 500 characters
+                    self._speak_long_text(text, method)
+                else:
+                    speak_text(text, method, self.user_name)
             except Exception as e:
                 print(f"[TTS Error]: {e}")
+    
+    def _speak_long_text(self, text, method='online'):
+        """Handle long text by breaking it into smaller chunks for better TTS performance"""
+        try:
+            # Split text into sentences for more natural pauses
+            import re
+            sentences = re.split(r'[.!?]+', text)
+            
+            # Group sentences into chunks of reasonable length
+            chunks = []
+            current_chunk = ""
+            
+            for sentence in sentences:
+                sentence = sentence.strip()
+                if not sentence:
+                    continue
+                    
+                # If adding this sentence would make chunk too long, start new chunk
+                if len(current_chunk + sentence) > 400:
+                    if current_chunk:
+                        chunks.append(current_chunk.strip())
+                        current_chunk = sentence
+                    else:
+                        # Single sentence is very long, keep it as is
+                        chunks.append(sentence)
+                        current_chunk = ""
+                else:
+                    current_chunk += (". " if current_chunk else "") + sentence
+            
+            # Add the last chunk if it exists
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+            
+            # Speak each chunk with a small pause between them
+            for i, chunk in enumerate(chunks):
+                if chunk:
+                    print(f"[TTS] Chunk {i+1}/{len(chunks)}: {chunk[:50]}...")
+                    speak_text(chunk, method, self.user_name)
+                    
+                    # Small pause between chunks (except for the last one)
+                    if i < len(chunks) - 1:
+                        import time
+                        time.sleep(0.5)
+                        
+        except Exception as e:
+            print(f"[TTS Long Text Error]: {e}")
+            # Fallback: try to speak the original text anyway
+            try:
+                speak_text(text[:500], method, self.user_name)  # Truncate if necessary
+            except:
+                print("[TTS] Failed to speak long text, text output only")
 
     def process_command(self, command):
         # Enhanced AIDEN processing
@@ -151,6 +253,7 @@ class ManusAI:
             if any(keyword in command.lower() for keyword in aiden_keywords):
                 response = self.aiden_core.process_command(command)
                 self.speak(response)
+                self._save_conversation_to_firebase(command, response)
                 return
         
         # Web search logic (enhanced for AIDEN)
@@ -170,18 +273,25 @@ class ManusAI:
                     if soup:
                         snippet = soup.find("div", class_="BNeawe s3v9rd AP7Wnd")
                         if snippet:
-                            if self.enable_aiden_mode:
-                                self.speak(f"Pesquisa concluída, {self.user_name}. {snippet.get_text()}")
-                            else:
-                                self.speak(f"Encontrei isto: {snippet.get_text()}")
+                            response = f"Pesquisa concluída, {self.user_name}. {snippet.get_text()}" if self.enable_aiden_mode else f"Encontrei isto: {snippet.get_text()}"
+                            self.speak(response)
+                            self._save_conversation_to_firebase(command, response)
                         else:
-                            self.speak("Pesquisa concluída, mas não encontrei resultados claros no formato atual.")
+                            response = "Pesquisa concluída, mas não encontrei resultados claros no formato atual."
+                            self.speak(response)
+                            self._save_conversation_to_firebase(command, response)
                     else:
-                        self.speak("Encontrei dificuldades para acessar recursos web.")
+                        response = "Encontrei dificuldades para acessar recursos web."
+                        self.speak(response)
+                        self._save_conversation_to_firebase(command, response)
                 except Exception as e:
-                    self.speak(f"Sistemas de pesquisa web estão enfrentando dificuldades técnicas: {str(e)}")
+                    response = f"Sistemas de pesquisa web estão enfrentando dificuldades técnicas: {str(e)}"
+                    self.speak(response)
+                    self._save_conversation_to_firebase(command, response)
             else:
-                self.speak("Capacidades de pesquisa web estão atualmente offline.")
+                response = "Capacidades de pesquisa web estão atualmente offline."
+                self.speak(response)
+                self._save_conversation_to_firebase(command, response)
             return
 
         # Conversational AI processing
@@ -204,14 +314,29 @@ Consulta do usuário: {command}"""
                     response = self.conversational_ai.send_message(command)
                     
                 self.speak(response)
+                self._save_conversation_to_firebase(command, response)
+                
             except Exception as e:
                 if self.enable_aiden_mode:
-                    self.speak(f"Peço desculpas, {self.user_name}, mas estou enfrentando dificuldades com meus sistemas de processamento avançado.")
+                    response = f"Peço desculpas, {self.user_name}, mas estou enfrentando dificuldades com meus sistemas de processamento avançado."
                 else:
-                    self.speak("Desculpe, não consegui processar sua solicitação no momento.")
+                    response = "Desculpe, não consegui processar sua solicitação no momento."
+                self.speak(response)
+                self._save_conversation_to_firebase(command, response)
         else:
             # Fallback responses
-            self._fallback_response(command)
+            response = self._fallback_response(command)
+            self._save_conversation_to_firebase(command, response)
+    
+    def _save_conversation_to_firebase(self, user_input: str, ai_response: str):
+        """Save conversation data to Firebase for learning and analysis"""
+        try:
+            from firebase_integration import get_firebase_manager
+            firebase_manager = get_firebase_manager()
+            firebase_manager.save_conversation(user_input, ai_response)
+        except Exception as e:
+            # Silently fail - don't interrupt user experience
+            pass
     
     def _fallback_response(self, command):
         """Provide intelligent fallback responses when AI is unavailable"""
@@ -219,13 +344,16 @@ Consulta do usuário: {command}"""
         
         if self.enable_aiden_mode:
             if any(word in command_lower for word in ["olá", "oi", "hello", "hi"]):
-                self.speak(f"Olá, {self.user_name}. Estou operando com capacidades limitadas, mas permaneço ao seu serviço.")
+                response = f"Olá, {self.user_name}. Estou operando com capacidades limitadas, mas permaneço ao seu serviço."
             elif "?" in command or any(word in command_lower for word in ["como", "what", "why", "quando"]):
-                self.speak(f"Essa é uma pergunta intrigante, {self.user_name}. Embora meus sistemas avançados estejam offline, posso ajudar com diagnósticos e operações do sistema.")
+                response = f"Essa é uma pergunta intrigante, {self.user_name}. Embora meus sistemas avançados estejam offline, posso ajudar com diagnósticos e operações do sistema."
             else:
-                self.speak(f"Reconheço sua solicitação, {self.user_name}. Minhas capacidades atuais incluem monitoramento do sistema e gerenciamento de arquivos. Como posso ajudá-lo?")
+                response = f"Reconheço sua solicitação, {self.user_name}. Minhas capacidades atuais incluem monitoramento do sistema e gerenciamento de arquivos. Como posso ajudá-lo?"
         else:
-            self.speak("Desculpe, não consegui entender completamente sua solicitação. Tente comandos como 'status do sistema' ou 'ajuda'.")
+            response = "Desculpe, não consegui entender completamente sua solicitação. Tente comandos como 'status do sistema' ou 'ajuda'."
+        
+        self.speak(response)
+        return response
 
     def run(self):
         # Enhanced greeting for AIDEN mode
