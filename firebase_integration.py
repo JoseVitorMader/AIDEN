@@ -10,11 +10,15 @@ from typing import Dict, List, Optional, Any
 # Safe import for Firebase (will be gracefully handled if not available)
 try:
     import firebase_admin
-    from firebase_admin import credentials, db
+    from firebase_admin import credentials, db, storage
     FIREBASE_AVAILABLE = True
 except ImportError:
     FIREBASE_AVAILABLE = False
     print("[INFO] Firebase Admin SDK not available - install with 'pip install firebase-admin'")
+
+# Additional imports for file handling
+import uuid
+import tempfile
 
 class FirebaseManager:
     def __init__(self, config: Dict[str, str]):
@@ -26,6 +30,7 @@ class FirebaseManager:
         """
         self.config = config
         self.db = None
+        self.bucket = None
         self.app = None
         self.connected = False
         
@@ -50,19 +55,30 @@ class FirebaseManager:
                     cred = credentials.ApplicationDefault()
                     self.app = firebase_admin.initialize_app(cred, {
                         'projectId': self.config.get('projectId', 'aiden-dd627'),
-                        'databaseURL': f"https://{self.config.get('projectId', 'aiden-dd627')}-default-rtdb.firebaseio.com/"
+                        'databaseURL': f"https://{self.config.get('projectId', 'aiden-dd627')}-default-rtdb.firebaseio.com/",
+                        'storageBucket': f"{self.config.get('projectId', 'aiden-dd627')}.appspot.com"
                     })
                 except Exception:
                     # Fallback: try to initialize with minimal config
                     print("[INFO] Using default Firebase credentials for Realtime Database")
                     self.app = firebase_admin.initialize_app(options={
-                        'databaseURL': f"https://{self.config.get('projectId', 'aiden-dd627')}-default-rtdb.firebaseio.com/"
+                        'databaseURL': f"https://{self.config.get('projectId', 'aiden-dd627')}-default-rtdb.firebaseio.com/",
+                        'storageBucket': f"{self.config.get('projectId', 'aiden-dd627')}.appspot.com"
                     })
             else:
                 self.app = firebase_admin.get_app()
             
             # Initialize Realtime Database
             self.db = db.reference()
+            
+            # Initialize Storage
+            try:
+                self.bucket = storage.bucket()
+                print(f"[SUCCESS] Connected to Firebase Storage: {self.bucket.name}")
+            except Exception as e:
+                print(f"[WARNING] Firebase Storage initialization failed: {e}")
+                self.bucket = None
+            
             self.connected = True
             print(f"[SUCCESS] Connected to Firebase Realtime Database: {self.config.get('projectId', 'unknown')}")
             
@@ -255,6 +271,91 @@ class FirebaseManager:
             print(f"[ERROR] Failed to get voice profile from Firebase: {e}")
             return self._get_voice_profile_locally(user_id)
     
+    def upload_voice_file(self, user_id: str, file_path: str, metadata: Dict[str, Any] = None) -> Optional[str]:
+        """
+        Upload a voice file to Firebase Storage
+        
+        Args:
+            user_id: User identifier
+            file_path: Path to the audio file to upload
+            metadata: Optional metadata about the file
+        
+        Returns:
+            str: Download URL if successful, None otherwise
+        """
+        if not self.bucket:
+            print("[WARNING] Firebase Storage not available - cannot upload files")
+            return None
+        
+        try:
+            # Generate unique filename
+            file_extension = os.path.splitext(file_path)[1]
+            unique_filename = f"voice_samples/{user_id}/{uuid.uuid4()}{file_extension}"
+            
+            # Upload file to Firebase Storage
+            blob = self.bucket.blob(unique_filename)
+            
+            # Set metadata
+            if metadata:
+                blob.metadata = metadata
+            
+            # Upload the file
+            blob.upload_from_filename(file_path)
+            
+            # Make the file publicly accessible (optional - for demo purposes)
+            # In production, you might want to use signed URLs instead
+            blob.make_public()
+            
+            # Get download URL
+            download_url = blob.public_url
+            
+            # Save file metadata to Realtime Database
+            file_data = {
+                'filename': unique_filename,
+                'download_url': download_url,
+                'upload_timestamp': datetime.datetime.now().isoformat(),
+                'metadata': metadata or {},
+                'user_id': user_id
+            }
+            
+            files_ref = self.db.child('voice_files').child(user_id)
+            files_ref.push(file_data)
+            
+            print(f"[Firebase] Voice file uploaded successfully: {unique_filename}")
+            return download_url
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to upload voice file to Firebase Storage: {e}")
+            return None
+    
+    def save_voice_analysis(self, user_id: str, analysis_data: Dict[str, Any]) -> bool:
+        """
+        Save voice analysis data to Firebase Realtime Database
+        
+        Args:
+            user_id: User identifier
+            analysis_data: Voice analysis results and characteristics
+        
+        Returns:
+            bool: True if saved successfully
+        """
+        if not self.connected:
+            return self._save_voice_analysis_locally(user_id, analysis_data)
+        
+        try:
+            analysis_data['timestamp'] = datetime.datetime.now().isoformat()
+            analysis_data['session_id'] = self._get_session_id()
+            
+            # Save to 'voice_analysis' node in Realtime Database
+            analysis_ref = self.db.child('voice_analysis').child(user_id)
+            analysis_ref.push(analysis_data)
+            print(f"[Firebase] Voice analysis saved for user: {user_id}")
+            return True
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to save voice analysis to Firebase: {e}")
+            return self._save_voice_analysis_locally(user_id, analysis_data)
+    
     def _get_session_id(self) -> str:
         """Generate a session ID for grouping related interactions"""
         return f"aiden_session_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -392,6 +493,37 @@ class FirebaseManager:
         except Exception as e:
             print(f"[ERROR] Failed to get voice profile locally: {e}")
             return {}
+
+    def _save_voice_analysis_locally(self, user_id: str, analysis_data: Dict[str, Any]) -> bool:
+        """Fallback method to save voice analysis locally"""
+        try:
+            filename = f"aiden_voice_analysis_{user_id}.json"
+            analysis_data['timestamp'] = datetime.datetime.now().isoformat()
+            
+            # Read existing data
+            try:
+                with open(filename, 'r', encoding='utf-8') as f:
+                    existing_data = json.load(f)
+            except FileNotFoundError:
+                existing_data = []
+            
+            # Append new data
+            existing_data.append(analysis_data)
+            
+            # Keep only last 50 entries to avoid large files
+            if len(existing_data) > 50:
+                existing_data = existing_data[-50:]
+            
+            # Write back
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(existing_data, f, indent=2, ensure_ascii=False, default=str)
+            
+            print(f"[Local] Voice analysis saved to {filename}")
+            return True
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to save voice analysis locally: {e}")
+            return False
 
 
 # Firebase configuration for Realtime Database

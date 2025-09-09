@@ -3,7 +3,8 @@ from gtts import gTTS
 import os
 import pygame
 import tempfile
-from typing import Optional, Dict, Any
+import time
+from typing import Optional, Dict, Any, List
 import json
 
 def get_voice_settings(user_id: str = "default") -> Dict[str, Any]:
@@ -18,14 +19,55 @@ def get_voice_settings(user_id: str = "default") -> Dict[str, Any]:
     except FileNotFoundError:
         pass
     
-    # Default voice settings - male voice, less robotic
+    # Default voice settings - male voice, less robotic, faster speed
     return {
-        'rate': 180,  # Speaking rate (words per minute)
+        'rate': 200,  # Speaking rate (words per minute) - increased from 180
         'volume': 0.9,  # Volume level (0.0 to 1.0)
         'voice_id': 'male',  # Prefer male voice
         'pitch': 0.8,  # Lower pitch for more natural sound
-        'language': 'pt-br'  # Portuguese Brazil
+        'language': 'pt-br',  # Portuguese Brazil
+        'chunk_size': 200  # Maximum words per chunk for long texts
     }
+
+def chunk_long_text(text: str, max_words: int = 200) -> List[str]:
+    """
+    Split long text into smaller chunks for better TTS processing.
+    
+    Args:
+        text: The text to split
+        max_words: Maximum number of words per chunk
+    
+    Returns:
+        List of text chunks
+    """
+    # Split text into sentences first
+    sentences = text.replace('.', '.|').replace('!', '!|').replace('?', '?|').split('|')
+    sentences = [s.strip() for s in sentences if s.strip()]
+    
+    chunks = []
+    current_chunk = ""
+    current_word_count = 0
+    
+    for sentence in sentences:
+        sentence_words = len(sentence.split())
+        
+        # If adding this sentence would exceed the limit, start a new chunk
+        if current_word_count + sentence_words > max_words and current_chunk:
+            chunks.append(current_chunk.strip())
+            current_chunk = sentence
+            current_word_count = sentence_words
+        else:
+            if current_chunk:
+                current_chunk += " " + sentence
+            else:
+                current_chunk = sentence
+            current_word_count += sentence_words
+    
+    # Add the last chunk if it exists
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+    
+    return chunks
 
 def configure_voice_engine(engine, settings: Dict[str, Any]) -> bool:
     """Configure the voice engine with specific settings"""
@@ -70,7 +112,7 @@ def configure_voice_engine(engine, settings: Dict[str, Any]) -> bool:
         return False
 
 def speak_offline(text: str, user_id: str = "default") -> bool:
-    """Convert text to speech using pyttsx3 (offline) with improved male voice."""
+    """Convert text to speech using pyttsx3 (offline) with improved male voice and long text handling."""
     try:
         engine = pyttsx3.init()
         settings = get_voice_settings(user_id)
@@ -78,9 +120,26 @@ def speak_offline(text: str, user_id: str = "default") -> bool:
         # Configure the voice with user preferences
         configure_voice_engine(engine, settings)
         
-        # Speak the text
-        engine.say(text)
-        engine.runAndWait()
+        # Handle long texts by chunking them
+        max_words = settings.get('chunk_size', 200)
+        word_count = len(text.split())
+        
+        if word_count > max_words:
+            print(f"[TTS] Long text detected ({word_count} words), chunking for better processing...")
+            chunks = chunk_long_text(text, max_words)
+            
+            for i, chunk in enumerate(chunks):
+                print(f"[TTS] Speaking chunk {i+1}/{len(chunks)}...")
+                engine.say(chunk)
+                engine.runAndWait()
+                
+                # Small pause between chunks for natural flow
+                if i < len(chunks) - 1:
+                    time.sleep(0.5)
+        else:
+            # Speak normally for shorter texts
+            engine.say(text)
+            engine.runAndWait()
         
         # Save voice usage data for learning
         save_voice_usage(user_id, text, 'offline', settings)
@@ -91,20 +150,54 @@ def speak_offline(text: str, user_id: str = "default") -> bool:
         return False
 
 def speak_online(text: str, user_id: str = "default", lang: str = 'pt-br', filename: Optional[str] = None) -> bool:
-    """Convert text to speech using gTTS (online) with male voice preference."""
+    """Convert text to speech using gTTS (online) with male voice preference and long text handling."""
     try:
-        if filename is None:
-            # Create a temporary file
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
-            filename = temp_file.name
-            temp_file.close()
-        
         settings = get_voice_settings(user_id)
         lang = settings.get('language', 'pt-br')
+        max_words = settings.get('chunk_size', 200)
+        word_count = len(text.split())
         
-        # Use gTTS with slower speed for more natural sound
-        tts = gTTS(text=text, lang=lang, slow=False, tld='com.br')
-        tts.save(filename)
+        # Handle long texts by chunking them
+        if word_count > max_words:
+            print(f"[TTS Online] Long text detected ({word_count} words), chunking for better processing...")
+            chunks = chunk_long_text(text, max_words)
+            
+            for i, chunk in enumerate(chunks):
+                print(f"[TTS Online] Processing chunk {i+1}/{len(chunks)}...")
+                
+                # Create temporary file for this chunk
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f'_chunk_{i}.mp3')
+                chunk_filename = temp_file.name
+                temp_file.close()
+                
+                # Use gTTS with slower speed for more natural sound
+                tts = gTTS(text=chunk, lang=lang, slow=False, tld='com.br')
+                tts.save(chunk_filename)
+                
+                # Play this chunk
+                volume = settings.get('volume', 0.9)
+                play_audio_file(chunk_filename, volume)
+                
+                # Clean up chunk file
+                try:
+                    os.remove(chunk_filename)
+                except:
+                    pass
+                
+                # Small pause between chunks for natural flow
+                if i < len(chunks) - 1:
+                    time.sleep(0.3)
+        else:
+            # Handle normal length texts
+            if filename is None:
+                # Create a temporary file
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
+                filename = temp_file.name
+                temp_file.close()
+            
+            # Use gTTS with slower speed for more natural sound
+            tts = gTTS(text=text, lang=lang, slow=False, tld='com.br')
+            tts.save(filename)
         
         # Save voice usage data for learning
         save_voice_usage(user_id, text, 'online', settings)
