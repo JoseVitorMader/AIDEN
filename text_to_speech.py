@@ -3,11 +3,21 @@ from gtts import gTTS
 import os
 import pygame
 import tempfile
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import json
 
 def get_voice_settings(user_id: str = "default") -> Dict[str, Any]:
     """Get voice settings for a specific user"""
+    try:
+        # Try to get from Firebase first
+        from firebase_integration import get_firebase_manager
+        firebase_manager = get_firebase_manager()
+        firebase_profile = firebase_manager.get_voice_profile(user_id)
+        if firebase_profile:
+            return firebase_profile
+    except:
+        pass
+    
     try:
         filename = f"aiden_voice_profiles_{user_id}.json"
         with open(filename, 'r', encoding='utf-8') as f:
@@ -18,13 +28,14 @@ def get_voice_settings(user_id: str = "default") -> Dict[str, Any]:
     except FileNotFoundError:
         pass
     
-    # Default voice settings - male voice, less robotic
+    # Default voice settings - faster, more natural male voice
     return {
-        'rate': 180,  # Speaking rate (words per minute)
+        'rate': 220,  # Increased speaking rate (words per minute) 
         'volume': 0.9,  # Volume level (0.0 to 1.0)
         'voice_id': 'male',  # Prefer male voice
         'pitch': 0.8,  # Lower pitch for more natural sound
-        'language': 'pt-br'  # Portuguese Brazil
+        'language': 'pt-br',  # Portuguese Brazil
+        'chunk_size': 200  # Maximum characters per TTS chunk for long texts
     }
 
 def configure_voice_engine(engine, settings: Dict[str, Any]) -> bool:
@@ -128,8 +139,76 @@ def play_audio_file(filename: str, volume: float = 0.9) -> bool:
         print(f"Erro ao reproduzir áudio: {e}")
         return False
 
+def chunk_text(text: str, max_chunk_size: int = 200) -> List[str]:
+    """Split long text into smaller chunks for better TTS processing."""
+    if len(text) <= max_chunk_size:
+        return [text]
+    
+    # Try to split on sentence boundaries first
+    sentences = text.split('. ')
+    chunks = []
+    current_chunk = ""
+    
+    for i, sentence in enumerate(sentences):
+        # Add period back except for the last sentence
+        if i < len(sentences) - 1:
+            sentence += '. '
+        
+        # If adding this sentence would exceed the limit
+        if len(current_chunk + sentence) > max_chunk_size:
+            if current_chunk:  # If we have something in current chunk
+                chunks.append(current_chunk.strip())
+                current_chunk = sentence
+            else:  # If the sentence itself is too long, split by words
+                words = sentence.split()
+                temp_chunk = ""
+                for word in words:
+                    if len(temp_chunk + " " + word) > max_chunk_size:
+                        if temp_chunk:
+                            chunks.append(temp_chunk.strip())
+                            temp_chunk = word
+                        else:
+                            # Word itself is too long, just add it
+                            chunks.append(word)
+                            temp_chunk = ""
+                    else:
+                        temp_chunk += " " + word if temp_chunk else word
+                if temp_chunk:
+                    current_chunk = temp_chunk
+        else:
+            current_chunk += sentence
+    
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+    
+    return chunks
+
 def speak_text(text: str, method: str = 'offline', user_id: str = "default") -> bool:
-    """Main function for speech synthesis with voice learning capabilities."""
+    """Main function for speech synthesis with voice learning capabilities and long text support."""
+    # Handle long texts by chunking
+    settings = get_voice_settings(user_id)
+    chunk_size = settings.get('chunk_size', 200)
+    
+    if len(text) > chunk_size:
+        print(f"[TTS] Processing long text ({len(text)} chars) in chunks...")
+        chunks = chunk_text(text, chunk_size)
+        success = True
+        
+        for i, chunk in enumerate(chunks):
+            print(f"[TTS] Speaking chunk {i+1}/{len(chunks)}...")
+            chunk_success = _speak_single_text(chunk, method, user_id)
+            if not chunk_success:
+                success = False
+            # Small pause between chunks
+            import time
+            time.sleep(0.3)
+        
+        return success
+    else:
+        return _speak_single_text(text, method, user_id)
+
+def _speak_single_text(text: str, method: str = 'offline', user_id: str = "default") -> bool:
+    """Internal function for speaking a single text chunk."""
     if method == 'offline':
         return speak_offline(text, user_id)
     elif method == 'online':
