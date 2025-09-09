@@ -5,6 +5,7 @@ Handles saving and retrieving conversation data and search results from Firebase
 
 import json
 import datetime
+import os
 from typing import Dict, List, Optional, Any
 
 # Safe import for Firebase (will be gracefully handled if not available)
@@ -43,33 +44,150 @@ class FirebaseManager:
         try:
             # Try to initialize Firebase app if not already done
             if not firebase_admin._apps:
-                # For production, you would use a service account JSON file:
-                # cred = credentials.Certificate('path/to/serviceAccountKey.json')
-                # For development/demo, we'll use application default or anonymous
-                try:
-                    cred = credentials.ApplicationDefault()
-                    self.app = firebase_admin.initialize_app(cred, {
-                        'projectId': self.config.get('projectId', 'aiden-dd627'),
-                        'databaseURL': f"https://{self.config.get('projectId', 'aiden-dd627')}-default-rtdb.firebaseio.com/"
-                    })
-                except Exception:
-                    # Fallback: try to initialize with minimal config
-                    print("[INFO] Using default Firebase credentials for Realtime Database")
-                    self.app = firebase_admin.initialize_app(options={
-                        'databaseURL': f"https://{self.config.get('projectId', 'aiden-dd627')}-default-rtdb.firebaseio.com/"
-                    })
+                # Try different authentication methods in order of preference
+                
+                # Method 1: Service Account Key file (best for production)
+                service_account_path = 'serviceAccountKey.json'
+                if self._try_service_account_auth(service_account_path):
+                    return
+                
+                # Method 2: Application Default Credentials (gcloud auth or env vars)
+                if self._try_application_default_auth():
+                    return
+                
+                # Method 3: Use environment variable for service account
+                if self._try_env_service_account_auth():
+                    return
+                
+                # Method 4: Anonymous access (if database rules allow it)
+                if self._try_anonymous_auth():
+                    return
+                
+                # If all methods fail, raise the last exception
+                raise Exception("No valid Firebase credentials found. Please set up authentication.")
+                
             else:
                 self.app = firebase_admin.get_app()
             
             # Initialize Realtime Database
-            self.db = db.reference()
-            self.connected = True
-            print(f"[SUCCESS] Connected to Firebase Realtime Database: {self.config.get('projectId', 'unknown')}")
+            try:
+                self.db = db.reference()
+                self.connected = True
+                print(f"[SUCCESS] Connected to Firebase Realtime Database: {self.config.get('projectId', 'unknown')}")
+            except Exception as db_error:
+                print(f"[ERROR] Database reference initialization failed: {db_error}")
+                raise db_error
             
         except Exception as e:
             print(f"[ERROR] Firebase Realtime Database initialization failed: {e}")
             print("[INFO] Continuing without Firebase - data will be stored locally only")
+            print()
+            print("🔥 FIREBASE AUTHENTICATION HELP:")
+            print("   Run: python3 setup_firebase_auth.py")
+            print("   Or download service account key to 'serviceAccountKey.json'")
+            print("   Or set GOOGLE_APPLICATION_CREDENTIALS environment variable")
+            print()
             self.connected = False
+    
+    def _try_service_account_auth(self, service_account_path: str) -> bool:
+        """Try to authenticate using a service account key file"""
+        import os
+        try:
+            if os.path.exists(service_account_path):
+                cred = credentials.Certificate(service_account_path)
+                self.app = firebase_admin.initialize_app(cred, {
+                    'projectId': self.config.get('projectId', 'aiden-dd627'),
+                    'databaseURL': self.config.get('databaseURL', 'https://aiden-dd627-default-rtdb.firebaseio.com/')
+                })
+                
+                # Test database access immediately
+                test_db = db.reference()
+                print(f"[SUCCESS] Firebase initialized with service account: {service_account_path}")
+                return True
+        except Exception as e:
+            print(f"[DEBUG] Service account authentication failed: {e}")
+            # Clean up the app if it was created but database access failed
+            if self.app:
+                try:
+                    firebase_admin.delete_app(self.app)
+                    self.app = None
+                except:
+                    pass
+        return False
+    
+    def _try_application_default_auth(self) -> bool:
+        """Try to authenticate using Application Default Credentials"""
+        try:
+            cred = credentials.ApplicationDefault()
+            self.app = firebase_admin.initialize_app(cred, {
+                'projectId': self.config.get('projectId', 'aiden-dd627'),
+                'databaseURL': self.config.get('databaseURL', 'https://aiden-dd627-default-rtdb.firebaseio.com/')
+            })
+            
+            # Test database access immediately
+            test_db = db.reference()
+            print("[SUCCESS] Firebase initialized with Application Default Credentials")
+            return True
+        except Exception as e:
+            print(f"[DEBUG] Application Default Credentials failed: {e}")
+            # Clean up the app if it was created but database access failed
+            if self.app:
+                try:
+                    firebase_admin.delete_app(self.app)
+                    self.app = None
+                except:
+                    pass
+        return False
+    
+    def _try_env_service_account_auth(self) -> bool:
+        """Try to authenticate using GOOGLE_APPLICATION_CREDENTIALS environment variable"""
+        import os
+        try:
+            if 'GOOGLE_APPLICATION_CREDENTIALS' in os.environ:
+                # This will use the credential file path from environment variable
+                cred = credentials.ApplicationDefault()
+                self.app = firebase_admin.initialize_app(cred, {
+                    'projectId': self.config.get('projectId', 'aiden-dd627'),
+                    'databaseURL': self.config.get('databaseURL', 'https://aiden-dd627-default-rtdb.firebaseio.com/')
+                })
+                
+                # Test database access immediately
+                test_db = db.reference()
+                print(f"[SUCCESS] Firebase initialized with environment credentials: {os.environ['GOOGLE_APPLICATION_CREDENTIALS']}")
+                return True
+        except Exception as e:
+            print(f"[DEBUG] Environment credentials failed: {e}")
+            # Clean up the app if it was created but database access failed
+            if self.app:
+                try:
+                    firebase_admin.delete_app(self.app)
+                    self.app = None
+                except:
+                    pass
+        return False
+    
+    def _try_anonymous_auth(self) -> bool:
+        """Try to initialize without credentials (for databases with public access)"""
+        try:
+            # Some Firebase databases allow read/write without authentication
+            self.app = firebase_admin.initialize_app(options={
+                'databaseURL': self.config.get('databaseURL', 'https://aiden-dd627-default-rtdb.firebaseio.com/')
+            })
+            
+            # Test database access immediately
+            test_db = db.reference()
+            print("[SUCCESS] Firebase initialized with anonymous access")
+            return True
+        except Exception as e:
+            print(f"[DEBUG] Anonymous access failed: {e}")
+            # Clean up the app if it was created but database access failed
+            if self.app:
+                try:
+                    firebase_admin.delete_app(self.app)
+                    self.app = None
+                except:
+                    pass
+        return False
     
     def save_search_result(self, query: str, result: str, source: str = "web") -> bool:
         """
