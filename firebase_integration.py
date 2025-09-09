@@ -376,6 +376,119 @@ class FirebaseManager:
             print(f"[ERROR] Failed to save voice sample locally: {e}")
             return False
     
+    def get_voice_learning_stats(self, user_id: str) -> Dict[str, Any]:
+        """
+        Get voice learning statistics for a user from Firebase Realtime Database
+        
+        Args:
+            user_id: User identifier
+        
+        Returns:
+            Dictionary with voice learning statistics
+        """
+        if not self.connected:
+            return self._get_voice_stats_locally(user_id)
+        
+        try:
+            voice_ref = self.db.child('voice_profiles').child(user_id)
+            voice_data = voice_ref.get()
+            
+            if not voice_data:
+                return {'message': 'No voice data found for user'}
+            
+            # Process voice learning data
+            total_samples = len(voice_data)
+            confidence_scores = []
+            recent_samples = []
+            
+            import datetime
+            week_ago = datetime.datetime.now() - datetime.timedelta(days=7)
+            
+            for key, sample in voice_data.items():
+                if isinstance(sample, dict):
+                    # Collect confidence scores
+                    if 'confidence' in sample:
+                        confidence_scores.append(sample['confidence'])
+                    
+                    # Check for recent samples
+                    timestamp_str = sample.get('timestamp')
+                    if timestamp_str:
+                        try:
+                            sample_time = datetime.datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                            if sample_time > week_ago:
+                                recent_samples.append(sample)
+                        except:
+                            pass
+            
+            # Calculate statistics
+            avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0.0
+            
+            stats = {
+                'total_voice_samples': total_samples,
+                'average_confidence': avg_confidence,
+                'recent_samples_week': len(recent_samples),
+                'voice_quality_trend': 'improving' if avg_confidence > 0.7 else 'needs_improvement',
+                'learning_active': len(recent_samples) > 0
+            }
+            
+            return stats
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to get voice learning stats from Firebase: {e}")
+            return self._get_voice_stats_locally(user_id)
+    
+    def update_voice_preferences(self, user_id: str, preferences: Dict[str, Any]) -> bool:
+        """
+        Update user voice preferences in Firebase Realtime Database
+        
+        Args:
+            user_id: User identifier
+            preferences: Voice preference settings
+        
+        Returns:
+            True if updated successfully
+        """
+        if not self.connected:
+            return self._update_voice_preferences_locally(user_id, preferences)
+        
+        try:
+            preferences['timestamp'] = datetime.datetime.now().isoformat()
+            preferences['type'] = 'voice_preferences'
+            
+            # Save to user preferences node
+            prefs_ref = self.db.child('user_preferences').child(user_id).child('voice')
+            prefs_ref.set(preferences)
+            
+            print(f"[Firebase] Voice preferences updated for user: {user_id}")
+            return True
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to update voice preferences in Firebase: {e}")
+            return self._update_voice_preferences_locally(user_id, preferences)
+    
+    def get_user_voice_preferences(self, user_id: str) -> Dict[str, Any]:
+        """
+        Get user voice preferences from Firebase Realtime Database
+        
+        Args:
+            user_id: User identifier
+        
+        Returns:
+            Voice preferences dictionary
+        """
+        if not self.connected:
+            return self._get_voice_preferences_locally(user_id)
+        
+        try:
+            prefs_ref = self.db.child('user_preferences').child(user_id).child('voice')
+            preferences = prefs_ref.get()
+            
+            return preferences if preferences else {}
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to get voice preferences from Firebase: {e}")
+            return self._get_voice_preferences_locally(user_id)
+    
     def _get_voice_profile_locally(self, user_id: str) -> Dict[str, Any]:
         """Fallback method to get voice profile locally"""
         try:
@@ -391,6 +504,83 @@ class FirebaseManager:
             
         except Exception as e:
             print(f"[ERROR] Failed to get voice profile locally: {e}")
+            return {}
+    
+    def _get_voice_stats_locally(self, user_id: str) -> Dict[str, Any]:
+        """Fallback method to get voice learning stats locally"""
+        try:
+            filename = f"aiden_voice_profiles_{user_id}.json"
+            
+            try:
+                with open(filename, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except FileNotFoundError:
+                return {'message': 'No voice learning data found locally'}
+            
+            if not data:
+                return {'message': 'No voice samples available'}
+            
+            # Calculate basic stats
+            total_samples = len(data)
+            confidence_scores = [d.get('confidence', 0) for d in data if 'confidence' in d]
+            avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0.0
+            
+            # Recent samples (last week)
+            import datetime
+            week_ago = datetime.datetime.now() - datetime.timedelta(days=7)
+            recent_samples = []
+            
+            for sample in data:
+                timestamp_str = sample.get('timestamp')
+                if timestamp_str:
+                    try:
+                        sample_time = datetime.datetime.fromisoformat(timestamp_str)
+                        if sample_time > week_ago:
+                            recent_samples.append(sample)
+                    except:
+                        pass
+            
+            return {
+                'total_voice_samples': total_samples,
+                'average_confidence': avg_confidence,
+                'recent_samples_week': len(recent_samples),
+                'voice_quality_trend': 'improving' if avg_confidence > 0.7 else 'needs_improvement',
+                'learning_active': len(recent_samples) > 0,
+                'source': 'local_storage'
+            }
+            
+        except Exception as e:
+            return {'error': str(e), 'source': 'local_storage'}
+    
+    def _update_voice_preferences_locally(self, user_id: str, preferences: Dict[str, Any]) -> bool:
+        """Fallback method to update voice preferences locally"""
+        try:
+            filename = f"aiden_voice_preferences_{user_id}.json"
+            preferences['timestamp'] = datetime.datetime.now().isoformat()
+            
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(preferences, f, indent=2, ensure_ascii=False)
+            
+            print(f"[Local] Voice preferences saved to {filename}")
+            return True
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to save voice preferences locally: {e}")
+            return False
+    
+    def _get_voice_preferences_locally(self, user_id: str) -> Dict[str, Any]:
+        """Fallback method to get voice preferences locally"""
+        try:
+            filename = f"aiden_voice_preferences_{user_id}.json"
+            
+            try:
+                with open(filename, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except FileNotFoundError:
+                return {}
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to get voice preferences locally: {e}")
             return {}
 
 

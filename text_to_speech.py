@@ -18,9 +18,9 @@ def get_voice_settings(user_id: str = "default") -> Dict[str, Any]:
     except FileNotFoundError:
         pass
     
-    # Default voice settings - male voice, less robotic
+    # Default voice settings - male voice, faster and more natural
     return {
-        'rate': 180,  # Speaking rate (words per minute)
+        'rate': 200,  # Increased speaking rate (words per minute)
         'volume': 0.9,  # Volume level (0.0 to 1.0)
         'voice_id': 'male',  # Prefer male voice
         'pitch': 0.8,  # Lower pitch for more natural sound
@@ -130,28 +130,170 @@ def play_audio_file(filename: str, volume: float = 0.9) -> bool:
 
 def speak_text(text: str, method: str = 'offline', user_id: str = "default") -> bool:
     """Main function for speech synthesis with voice learning capabilities."""
-    if method == 'offline':
-        return speak_offline(text, user_id)
-    elif method == 'online':
-        # Create temporary file for online TTS
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
-        filename = temp_file.name
-        temp_file.close()
+    try:
+        # Enhanced error handling and voice adaptation
+        if not text or not text.strip():
+            print("[TTS] Empty text provided, skipping speech synthesis")
+            return False
         
-        if speak_online(text, user_id, filename=filename):
-            settings = get_voice_settings(user_id)
-            volume = settings.get('volume', 0.9)
-            result = play_audio_file(filename, volume)
-            # Clean up temporary file
-            try:
-                os.remove(filename)
-            except:
-                pass
-            return result
-        return False
+        # Clean and prepare text for better synthesis
+        text = _clean_text_for_tts(text)
+        
+        if method == 'offline':
+            result = speak_offline(text, user_id)
+        elif method == 'online':
+            # Create temporary file for online TTS
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
+            filename = temp_file.name
+            temp_file.close()
+            
+            if speak_online(text, user_id, filename=filename):
+                settings = get_voice_settings(user_id)
+                volume = settings.get('volume', 0.9)
+                result = play_audio_file(filename, volume)
+                # Clean up temporary file
+                try:
+                    os.remove(filename)
+                except:
+                    pass
+                return result
+            return False
+        else:
+            print(f"[TTS] Invalid method '{method}'. Use 'offline' or 'online'.")
+            return False
+        
+        # Log successful speech for learning
+        if result:
+            _log_successful_speech(user_id, text, method)
+        
+        return result
+        
+    except Exception as e:
+        print(f"[TTS Critical Error]: {e}")
+        # Try fallback method
+        try:
+            print("[TTS] Attempting fallback speech synthesis...")
+            return _fallback_speak(text, user_id)
+        except:
+            print("[TTS] All speech synthesis methods failed")
+            return False
+
+def _clean_text_for_tts(text: str) -> str:
+    """Clean and prepare text for better text-to-speech synthesis"""
+    import re
+    
+    # Remove excessive whitespace
+    text = ' '.join(text.split())
+    
+    # Replace common abbreviations with full words for better pronunciation
+    replacements = {
+        'Dr.': 'Doutor',
+        'Sra.': 'Senhora',
+        'Sr.': 'Senhor',
+        'etc.': 'etcetera',
+        'ex.': 'exemplo',
+        'p.ex.': 'por exemplo',
+        'vs.': 'versus',
+        'n°': 'número',
+        'nº': 'número',
+        '%': 'porcento',
+        '&': 'e',
+        '@': 'arroba',
+        'R$': 'reais',
+        'US$': 'dólares',
+    }
+    
+    for abbrev, full_word in replacements.items():
+        text = text.replace(abbrev, full_word)
+    
+    # Handle numbers better
+    text = re.sub(r'\b(\d+)\b', lambda m: _number_to_words(int(m.group(1))), text)
+    
+    return text
+
+def _number_to_words(num: int) -> str:
+    """Convert numbers to words for better TTS pronunciation (basic implementation)"""
+    if num == 0:
+        return "zero"
+    
+    # Basic number conversion (simplified)
+    ones = ["", "um", "dois", "três", "quatro", "cinco", "seis", "sete", "oito", "nove"]
+    teens = ["dez", "onze", "doze", "treze", "quatorze", "quinze", "dezesseis", "dezessete", "dezoito", "dezenove"]
+    tens = ["", "", "vinte", "trinta", "quarenta", "cinquenta", "sessenta", "setenta", "oitenta", "noventa"]
+    
+    if 0 <= num <= 9:
+        return ones[num]
+    elif 10 <= num <= 19:
+        return teens[num - 10]
+    elif 20 <= num <= 99:
+        return tens[num // 10] + ("" if num % 10 == 0 else " e " + ones[num % 10])
     else:
-        print("Método inválido. Use 'offline' ou 'online'.")
+        return str(num)  # Fallback for larger numbers
+
+def _fallback_speak(text: str, user_id: str) -> bool:
+    """Fallback speech method when primary methods fail"""
+    try:
+        # Try the simplest pyttsx3 setup
+        import pyttsx3
+        engine = pyttsx3.init()
+        engine.say(text[:200])  # Limit text length for fallback
+        engine.runAndWait()
+        
+        print("[TTS] Fallback speech synthesis completed")
+        return True
+        
+    except Exception as e:
+        print(f"[TTS] Fallback also failed: {e}")
         return False
+
+def _log_successful_speech(user_id: str, text: str, method: str):
+    """Log successful speech synthesis for learning and adaptation"""
+    try:
+        # Try to save to Firebase
+        try:
+            from firebase_integration import get_firebase_manager
+            firebase_manager = get_firebase_manager()
+            
+            speech_data = {
+                'text_spoken': text,
+                'method_used': method,
+                'speech_length': len(text),
+                'word_count': len(text.split()),
+                'synthesis_success': True,
+                'context': 'successful_speech'
+            }
+            
+            firebase_manager.save_voice_sample(user_id, speech_data)
+            
+        except ImportError:
+            # Local logging as fallback
+            filename = f"aiden_speech_log_{user_id}.json"
+            
+            import datetime
+            log_entry = {
+                'timestamp': datetime.datetime.now().isoformat(),
+                'text': text[:100] + '...' if len(text) > 100 else text,  # Truncate for logging
+                'method': method,
+                'success': True
+            }
+            
+            try:
+                with open(filename, 'r', encoding='utf-8') as f:
+                    logs = json.load(f)
+            except FileNotFoundError:
+                logs = []
+            
+            logs.append(log_entry)
+            
+            # Keep only last 50 entries
+            if len(logs) > 50:
+                logs = logs[-50:]
+            
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(logs, f, indent=2, ensure_ascii=False)
+                
+    except Exception as e:
+        print(f"[TTS] Failed to log speech data: {e}")
 
 def save_voice_usage(user_id: str, text: str, method: str, settings: Dict[str, Any]) -> None:
     """Save voice usage data for learning and adaptation."""
