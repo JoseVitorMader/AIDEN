@@ -133,11 +133,77 @@ class ManusAI:
         # Attempt text-to-speech if available
         if TEXT_TO_SPEECH_AVAILABLE:
             try:
-                speak_text(text, method)
+                # Handle large texts by chunking them for better TTS processing
+                self._speak_with_chunking(text, method)
             except Exception as e:
                 print(f"[TTS Error]: {e}")
+                
+    def _speak_with_chunking(self, text, method='online', max_chunk_size=800):
+        """
+        Break large texts into smaller chunks for better TTS processing
+        
+        Args:
+            text: Text to speak
+            method: TTS method ('online' or 'offline')
+            max_chunk_size: Maximum characters per chunk
+        """
+        try:
+            from text_to_speech import speak_text
+            
+            # If text is short enough, speak directly
+            if len(text) <= max_chunk_size:
+                speak_text(text, method, user_id=self.user_name)
+                return
+            
+            # Split text into sentences for more natural chunking
+            import re
+            # Split by sentence endings, keeping the punctuation
+            sentences = re.split(r'(?<=[.!?])\s+', text)
+            
+            current_chunk = ""
+            
+            for sentence in sentences:
+                # If adding this sentence would exceed chunk size, speak current chunk
+                if len(current_chunk) + len(sentence) > max_chunk_size and current_chunk:
+                    speak_text(current_chunk.strip(), method, user_id=self.user_name)
+                    current_chunk = sentence
+                else:
+                    current_chunk = current_chunk + " " + sentence if current_chunk else sentence
+            
+            # Speak any remaining text
+            if current_chunk.strip():
+                speak_text(current_chunk.strip(), method, user_id=self.user_name)
+                
+            # Save conversation data to Firebase for learning
+            self._save_conversation_data(text)
+                
+        except Exception as e:
+            print(f"[Chunking Error]: {e}")
+            # Fallback to direct speaking attempt
+            try:
+                from text_to_speech import speak_text
+                speak_text(text[:max_chunk_size], method, user_id=self.user_name)
+            except Exception as fallback_error:
+                print(f"[Fallback TTS Error]: {fallback_error}")
+    
+    def _save_conversation_data(self, ai_response):
+        """Save conversation data to Firebase for voice learning"""
+        try:
+            from firebase_integration import get_firebase_manager
+            firebase_manager = get_firebase_manager()
+            
+            # Get the last user input (this is a simple approach)
+            user_input = getattr(self, '_last_user_input', 'Unknown')
+            firebase_manager.save_conversation(user_input, ai_response)
+            
+        except Exception as e:
+            # Graceful failure - don't interrupt the conversation
+            print(f"[Firebase Warning]: Could not save conversation data: {e}")
 
     def process_command(self, command):
+        # Store last user input for conversation logging
+        self._last_user_input = command
+        
         # Enhanced AIDEN processing
         if self.enable_aiden_mode and self.aiden_core:
             # Check if this is an AIDEN system command
